@@ -1,0 +1,17 @@
+node_modules/
+
+# OS/editor noise
+.DS_Store
+*.swp
+*.swo
+
+# Logs and temp files
+*.log
+*.tmp
+
+# Local backups
+*.bak
+
+# Secrets
+.env
+.env.*
