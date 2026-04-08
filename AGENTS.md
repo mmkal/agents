@@ -6,11 +6,7 @@ Usually, I don't actually want you to commit. I'll tell you when I do. I will so
 
 ## Debugging
 
-When looking into a production failure or a dev bug:
-
-## Debugging dependencies
-
-Sometimes, you'll need to look into how a dependency I'm using works. You should always feel free to git clone the source repo if you need to dig deep, as it will often be more readable than what's in node_modules. You can check if I already have it in ~/src, otherwise you can clone it in /tmp. No need to ask me to do that.
+When looking into a production failure or a dev bug: Sometimes, you'll need to look into how a dependency I'm using works. You should always feel free to look at github issues for the dependency repo, or git clone the source repo if you need to dig deep. The source code will often be more readable than what's in node_modules. You can check if I already have it in ~/src, otherwise you can clone it in /tmp. No need to ask me to do that.
 
 ## Drawing inspiration
 
@@ -44,9 +40,21 @@ Use judgement, but in general avoid creating very thin abstractions in test code
 
 When using `expect`: Prefer `expect(thing).toMatchObject({someProperty: 1234})` over `expect(thing.someProperty).toBe(1234)` - the error messages are more helpful.
 
+### API vs test fixes
+
+When a test exposes an API ergonomics hole or type hole, prefer fixing the product surface before adding test-side wrappers or coercions. If the cleaner test syntax ought to work for users of the library, make it work in the library.
+
 ### Timeouts
 
 Testing is a *CRITICAL* part of agent-led development. That means slow feedback loops are a disaster. If a test needs a timeout bumped, that's a really big deal. It doesn't mean never do it, but it's worth reconsidering the design of the whole test suite, or even the whole system under test to avoid it and to enable aggressive timeouts.
+
+### Typescript in tests
+
+Test files are not the right place to get overly fancy or strict about types in helper function. If you are writing a helper for tests, it's a red flag if you have excessively complicated generics or runtime type checks like `typeof foo === "object" && foo !== "null" && "bar" in foo && typeof bar === "string"`. Just type `foo` as `any` rather than doing that. If part of the test requires confirming the shape of `foo`, use an expect matcher, or zod.
+
+## Code design
+
+Avoid putting fallback values, default parameters, and optional properties everywhere. If you're writing a function with a known, small number of callsites, just make parameters required and force each callsite to pass values in explicitly. It makes the code produced much easier to reason about. Similarly, don't provide tons of fallback values - in general, you should instead redesign the system to validate its assumptions, either through strong types or runtime assertions. There are exceptions to this, of course, but you should keep it in mind.
 
 ## Writing React
 
@@ -70,3 +78,7 @@ In greenfield projects, here's what I *usually* recommend using.
 deployment:
 
 - cloudflare + alchemy.run
+
+## Frustration-driven improvement
+
+When I express frustration with your work (swearing, insults, "wtf", etc.), after addressing the immediate issue, propose a short generalized rule to prevent the class of mistake in future. State the rule and where you'd put it (project-level instructions, global instructions, or memory). Check existing rules for conflicts or overlap before proposing. Don't propose anything if the mistake was purely situational with no generalizable lesson.
