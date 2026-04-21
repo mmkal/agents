@@ -1,0 +1,22 @@
+{
+  "permissions": {
+    "allow": [
+      "*"
+    ],
+    "defaultMode": "bypassPermissions"
+  },
+  "model": "opus[1m]",
+  "skipDangerousModePermissionPrompt": true,
+  "hooks": {
+    "Stop": [
+      {
+        "hooks": [
+          {
+            "type": "command",
+            "command": "/Users/mmkal/src/agents/scripts/autocommit.sh"
+          }
+        ]
+      }
+    ]
+  }
+}
