@@ -107,8 +107,6 @@ If you think you need to, it's better to go to some lengths to avoid it. Use `@t
 
 ### Patterns to avoid
 
-If you're stringifying an error, don't do `error instanceof Error ? error.message : String(error)`. You can just do `String(error)` - the result is identical and it's more readable.
-
 Avoid `??` except in very rare situations. `||` is more compatible, and more readable, and more useful. For non-primitive values (Arrays, Objects, Functions etc.) it's the same thing. For strings, it's often better from a product point of view to get the fallback value on empty string. (e.g. `const displayName = prompt('what is your name') || 'anonymous user'` is much better than `??` because you don't want to store `''` as a user's name)
 
 Avoid adding `readonly` to any typescript types, it makes output types more awkward to work with and just creates visual noise. If you are *forced* to add it because some other annoying person has made their output types readonly, fine, but otherwise no thank you.
