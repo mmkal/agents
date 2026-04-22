@@ -2,7 +2,7 @@
 
 >Note: this repo is "just for me" for now. Putting it on GitHub on the off-chance it could be helpful for someone else someday, but if it is, it'll most likely be in a "look at this and maybe copy something" way than a `npx skills mmkal/agents/...` way.
 
-Single source of truth for my agent-tool configuration (Claude Code, opencode, codex).
+Single source of truth for some parts of my agent-tool configuration (Claude Code, opencode, codex).
 Everything that was previously scattered across `~/.config/opencode/`, `~/.claude/`, and
 `~/.codex/` lives here, and `scripts/install.sh` plants the symlinks that make each tool
 pick it up.
