@@ -28,6 +28,12 @@ When you think you're done with a task that has a branch/pull request, move it t
 
 Much of my day is often taken up reviewing and iterating on your bedtime work. I'll do this via a mixture of GitHub comments and direct prompting to you. When I leave comments, you should reply to them but start your replies with "🤖" because it looks otherwise like me talking to me. Always resolve comments once you've handled them (which could mean accepting their premise, and making a change accordingly or it might mean replying saying "you are wrong about that").
 
+## Pull requests
+
+The title and body of each pull request is very important. I will always want to squash and merge it once it's complete, and I configure my repos to use the body as the commit message once it goes into main.
+
+The body of the pull request shouldn't just be a simulacrum of the task file. It should be more oriented to an *external user* and/or a *human reviewer*. So it should summarise what the net effect will be if/when the pull request is merged. If adding a new feature to a library, show some very abbreviated sample code showcasing how it would be used. Similarly if there's a bug you could showcase some sample code with the before/after output. You can use comments and hand-waving in this sample code. It's just for communication. If it's a visible feature, bonus points if you can get a screenshot from a playwright fixture.
+
 ## Git operations
 
 Don't rewrite history. When updating from another branch, always merge, never rebase. Never amend commits. If you have a situation where you *really think* it's necessary to rewrite history, ask the user to do it with a suggested command to run.
