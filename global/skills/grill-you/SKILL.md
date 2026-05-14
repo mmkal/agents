@@ -1,11 +1,11 @@
 ---
 name: grill-you
-description: Flesh out a high-level task by spawning a sub-claude that runs `grill-me` on the topic, then answering its questions on behalf of the user autonomously. Produces a task file specific enough for autonomous implementation.
+description: Flesh out a high-level task by spawning a sub-claude that runs `grill-with-docs` on the topic, then answering its questions on behalf of the user autonomously. Produces a task file specific enough for autonomous implementation.
 ---
 
 # grill-you
 
-Interview a sub-claude on the user's behalf. The sub-claude will run `grill-me` and ask you questions as if you were the user. Answer the way the *actual* user would — using CLAUDE.md, memory, recent conversation, and the codebase — so by the end you have a task file fleshed out enough to hand off.
+Interview a sub-claude on the user's behalf. The sub-claude will run `grill-with-docs` and ask you questions as if you were the user. Answer the way the *actual* user would — using CLAUDE.md, memory, recent conversation, and the codebase — so by the end you have a task file fleshed out enough to hand off.
 
 You are in a worktree. This is low-stakes: the user is not obligated to use the output. Make product decisions, make taste calls, make guesses. The only requirement is that guesses are logged as guesses so the user can spot them in review.
 
@@ -51,7 +51,7 @@ For each turn N starting at 1:
      --permission-mode bypassPermissions \
      --output-format json \
      --model sonnet \
-     "$(cat /tmp/grillings/<repo>/<slug>/dossier.md)\n\nRead the dossier above. Invoke grill-me. Ask question 1 only." \
+     "$(cat /tmp/grillings/<repo>/<slug>/dossier.md)\n\nRead the dossier above. Invoke grill-with-docs. Ask question 1 only." \
      | tee /tmp/grillings/<repo>/<slug>/turn-01-raw.json
    ```
    Extract `.session_id` into `session.env`.
