@@ -35,6 +35,8 @@ Two kinds of config live here:
 - **`<tool>/`** — content that's specific to one tool's config format (settings.json,
   opencode.json, plugin/, …). Only that tool's install-target gets a symlink to it.
 
+Note: `global/skills/` is currently just skills that I myself have written. There are other skills on my machine under `~` which are installed by tools like `npx skills ...`.
+
 The root `AGENTS.md` is a *third* thing: instructions for agents editing THIS repo.
 It's not symlinked anywhere; it's loaded only when an agent is working inside
 `/Users/mmkal/src/agents/`.
