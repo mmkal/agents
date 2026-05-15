@@ -33,12 +33,13 @@ for p in \
   "$HOME/.config/opencode/bun.lock" \
   "$HOME/.claude/CLAUDE.md" \
   "$HOME/.claude/settings.json" \
-  "$HOME/.codex/AGENTS.md"
+  "$HOME/.codex/AGENTS.md" \
+  "$HOME/.pi/agent/AGENTS.md"
 do
   unlink_if_points_here "$p"
 done
 
-for dir in "$HOME/.config/opencode/skills" "$HOME/.claude/skills" "$HOME/.codex/skills"; do
+for dir in "$HOME/.config/opencode/skills" "$HOME/.claude/skills" "$HOME/.codex/skills" "$HOME/.pi/agent/skills"; do
   [ -d "$dir" ] || continue
   for entry in "$dir"/*; do
     [ -e "$entry" ] || continue

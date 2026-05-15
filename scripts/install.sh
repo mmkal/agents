@@ -37,6 +37,7 @@ echo "installing symlinks from $REPO"
 link "$REPO/global/AGENTS.md"        "$HOME/.config/opencode/AGENTS.md"
 link "$REPO/global/AGENTS.md"        "$HOME/.claude/CLAUDE.md"
 link "$REPO/global/AGENTS.md"        "$HOME/.codex/AGENTS.md"
+link "$REPO/global/AGENTS.md"        "$HOME/.pi/agent/AGENTS.md"
 
 # opencode config files.
 link "$REPO/opencode/opencode.json"       "$HOME/.config/opencode/opencode.json"
@@ -55,6 +56,7 @@ for skill in "$REPO/global/skills"/*/; do
   link "$REPO/global/skills/$name" "$HOME/.config/opencode/skills/$name"
   link "$REPO/global/skills/$name" "$HOME/.claude/skills/$name"
   link "$REPO/global/skills/$name" "$HOME/.codex/skills/$name"
+  link "$REPO/global/skills/$name" "$HOME/.pi/agent/skills/$name"
 done
 
 echo "done."
