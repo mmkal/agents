@@ -71,13 +71,15 @@ For truly trivial features/fixes, you can just implement them directly. If it's 
 
 When a user asks you to expose a missing feature with a test, write a failing spec for the intended behavior, not a passing test that asserts the current broken behavior.
 
+Prefer driving the system through public user/runtime behavior and letting dependencies produce their own state. Only write directly into another component’s private datastore when the test is explicitly for that adapter/parser boundary; otherwise treat private datastore seeding as a smell and first look for a product seam or controllable fake dependency that produces the state naturally.
+
 ### Fixtures
 
 Don't use beforeEach, beforeAll, afterEach, afterAll. Instead, prefer fixtures with `Symbol.dispose`/`Symbol.asyncDispose`. Read this for more context if you are curious: https://www.epicweb.dev/better-test-setup-with-disposable-objects.
 
 ### Structure
 
-It's important that a reader can open the test file, read it and go "oh, I see what's going on here". This means that fixtures, helper functions etc. should be at the *bottom* of the file. The first thing they read should be the test itself. If they're interested in helper functions they can scroll down to read their implementations.
+It's important that a reader can open the test file, read it and go "oh, I see what's going on here". This means that fixtures, helper functions etc. should be at the *bottom* of the file, or in a separate helper module if they're useful in multiple test files. The first thing they read should be the test itself. If they're interested in helper functions they can scroll down to read their implementations.
 
 ### Mocking
 
@@ -89,9 +91,11 @@ The filesystem is a good method of organization, so you shouldn't usually need `
 
 ### Abstractions
 
-Use judgement, but in general avoid creating very thin abstractions in test code. A little repetitiveness is usually preferable. (Of course, if specifically being asked to refactor to *add* a heavily-used thin abstraction, that's an exception)
+Use judgement, but in general avoid creating very thin abstractions in test code. A little repetitiveness is usually preferable. (Of course, if specifically being asked to refactor to *add* a heavily-used thin abstraction, that's an exception).
 
 Avoid single-use helper fetch implementations and unrelated hostnames like `example.com` in tests. Prefer the shared test server with inline request handling so the test shows the behavior directly.
+
+Also avoid trivial passthrough helper function. Inline them so the reader can better see what's actually happening.
 
 ### Assertions
 
