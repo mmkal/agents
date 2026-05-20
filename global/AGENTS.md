@@ -41,7 +41,22 @@ Much of my day is often taken up reviewing and iterating on your bedtime work. I
 
 The title and body of each pull request is very important. I will always want to squash and merge it once it's complete, and I configure my repos to use the body as the commit message once it goes into main.
 
-The body of the pull request shouldn't just be a simulacrum of the task file. It should be more oriented to an *external user* and/or a *human reviewer*. So it should summarise what the net effect will be if/when the pull request is merged. If adding a new feature to a library, show some very abbreviated sample code showcasing how it would be used. Similarly if there's a bug you could showcase some sample code with the before/after output. You can use comments and hand-waving in this sample code. It's just for communication. If it's a visible feature, bonus points if you can get a screenshot from a playwright fixture.
+The body of the pull request shouldn't just be a simulacrum of the task file. It should be more oriented to an *external user* and/or a *human reviewer*. So it should summarise what the net effect will be if/when the pull request is merged. If adding a new feature to a library, show some very abbreviated self-contained sample code showcasing how it would be used (use judgement here, you can hallucinate exeternal calls if they're obviously external and verbosely named like `const weather = await getWeatherDataFromSomeExternalAPI()`, since that makes clear which part *isn't* being showcased here).
+
+Similarly if there's a bug you could showcase some sample code with the before/after output. You can use comments and hand-waving in this sample code. It's just for communication.
+
+### Pull request media
+
+When a pull request would benefit from visual review, include screenshots or short videos in the PR body. The most reliable way to upload arbitrary media to GitHub is to use the browser attachment flow:
+
+1. Open the pull request in GitHub with Playwriter.
+2. Edit the PR body or a comment.
+3. Click the editor's `Attach files` button, choose the local image/video, and wait for GitHub to insert a `https://github.com/user-attachments/assets/...` URL.
+4. Ensure the raw attachment URL appears on its own paragraph, not inside Markdown link syntax. Use `https://github.com/user-attachments/assets/...`, not `[video.webm](https://github.com/user-attachments/assets/...)` and not HTML tags.
+5. Save the edit. GitHub will render supported videos inline as a player.
+
+The GitHub CLI can edit the PR body once you already have an attachment URL, but it does not provide an equivalent generic upload command for markdown attachments.
+
 
 ## Git operations
 
