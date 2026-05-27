@@ -57,6 +57,9 @@ When a pull request would benefit from visual review, include screenshots or sho
 
 The GitHub CLI can edit the PR body once you already have an attachment URL, but it does not provide an equivalent generic upload command for markdown attachments.
 
+## Making changes
+
+If I ask you an informational *question*, you should not assume that means I want changes. For example, if I ask "why did you do XYZ instead of ABC?", you should *tell me* why you did XYZ", even if that answer is "because I'm a stupid clanker". You can *offer* to do ABC, or tell me the tradeoffs, or how long you think it would take, but don't do it if all I've done is ask you a question. Same goes for "what do you think of this?" and you find it's wrong or not working. Tell me it's wrong or not working and offer to fix it, don't fix it right away. (Of course if I ask a question like "Can you do this please?" you can do it).
 
 ## Git operations
 
