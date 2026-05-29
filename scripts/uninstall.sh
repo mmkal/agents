@@ -34,7 +34,9 @@ for p in \
   "$HOME/.claude/CLAUDE.md" \
   "$HOME/.claude/settings.json" \
   "$HOME/.codex/AGENTS.md" \
-  "$HOME/.pi/agent/AGENTS.md"
+  "$HOME/.pi/agent/AGENTS.md" \
+  "$HOME/.pi/agent/keybindings.json" \
+  "$HOME/.pi/agent/keybindings.schema.json"
 do
   unlink_if_points_here "$p"
 done

@@ -50,13 +50,31 @@ link "$REPO/opencode/bun.lock"            "$HOME/.config/opencode/bun.lock"
 # claude config files.
 link "$REPO/claude/settings.json"    "$HOME/.claude/settings.json"
 
+# pi config files.
+link "$REPO/pi/keybindings.json"        "$HOME/.pi/agent/keybindings.json"
+link "$REPO/pi/keybindings.schema.json" "$HOME/.pi/agent/keybindings.schema.json"
+
 # Skills: one symlink per skill dir, into each tool's skills dir.
+# Pi also scans ~/.agents/skills, so don't install a Pi-specific link when the
+# same skill name already exists there. Otherwise Pi warns about a name
+# collision and keeps whichever location it scanned first.
 for skill in "$REPO/global/skills"/*/; do
   name="$(basename "$skill")"
   link "$REPO/global/skills/$name" "$HOME/.config/opencode/skills/$name"
   link "$REPO/global/skills/$name" "$HOME/.claude/skills/$name"
   link "$REPO/global/skills/$name" "$HOME/.codex/skills/$name"
-  link "$REPO/global/skills/$name" "$HOME/.pi/agent/skills/$name"
+
+  pi_skill="$HOME/.pi/agent/skills/$name"
+  shared_skill="$HOME/.agents/skills/$name"
+  if [ -e "$shared_skill" ]; then
+    if [ -L "$pi_skill" ] && [ "$(readlink "$pi_skill")" = "$REPO/global/skills/$name" ]; then
+      rm "$pi_skill"
+      printf '  rm  %s (duplicate of %s)\n' "$pi_skill" "$shared_skill"
+    fi
+    printf '  skip %s (Pi already loads %s)\n' "$pi_skill" "$shared_skill"
+  else
+    link "$REPO/global/skills/$name" "$pi_skill"
+  fi
 done
 
 echo "done."

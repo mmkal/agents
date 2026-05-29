@@ -75,6 +75,8 @@ Sometimes I'll ask you to work in a git worktree. This should be done in a sibli
 
 Usually a worktree should correspond to a branch with the same name, and there will often be a pull request for it. In those cases, it's not useful to leave working or staged changes - those worktrees are in general "hands-off" and I want to review them via GitHub's pull request UI or by looking at git history, so feel free to just commit and push as you're making changes.
 
+After a pull request corresponding to a worktree is merged to main, clean up the worktree locally.
+
 ## Debugging
 
 When looking into a production failure or a dev bug: Sometimes, you'll need to look into how a dependency I'm using works. You should always feel free to look at github issues for the dependency repo, or git clone the source repo if you need to dig deep. The source code will often be more readable than what's in node_modules. You can check if I already have it in ~/src, otherwise you can clone it in /tmp. No need to ask me to do that.
