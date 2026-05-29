@@ -171,6 +171,11 @@ export function createPeekabooAgentPlanner(options: { maxSteps?: number } = {}) 
   return async function planWithPeekabooAgent({
     step,
   }: DemoPlanningRequest): Promise<DemoRecipe> {
+    const appLaunchRecipe = inferAppLaunchRecipe(step)
+    if (appLaunchRecipe) {
+      return appLaunchRecipe
+    }
+
     return {
       how: {
         kind: 'exec',
@@ -179,6 +184,59 @@ export function createPeekabooAgentPlanner(options: { maxSteps?: number } = {}) 
       },
     }
   }
+}
+
+function inferAppLaunchRecipe(step: string): DemoRecipe | undefined {
+  const appName = appNameFromStep(step)
+
+  if (!appName) {
+    return undefined
+  }
+
+  return {
+    preconditions: {
+      kind: 'exec',
+      command: 'peekaboo permissions --json',
+    },
+    how: {
+      kind: 'exec',
+      command: `peekaboo app launch ${shellQuote(appName)} --wait-until-ready`,
+    },
+    postconditions: {
+      kind: 'exec',
+      command: 'peekaboo app list --json',
+    },
+  }
+}
+
+function appNameFromStep(step: string) {
+  const normalizedStep = step.trim()
+
+  if (!/\b(open|launch|start)\b/i.test(normalizedStep)) {
+    return ''
+  }
+
+  const quoted = normalizedStep.match(/["“](.+?)["”]/)
+  if (quoted) {
+    return titleCaseAppName(quoted[1])
+  }
+
+  const match = normalizedStep.match(
+    /\b(?:open|launch|start)(?:\s+the)?\s+(.+?)(?:\s+(?:application|app))?$/i,
+  )
+  if (!match) {
+    return ''
+  }
+
+  return titleCaseAppName(match[1])
+}
+
+function titleCaseAppName(appName: string) {
+  return appName
+    .trim()
+    .split(/\s+/)
+    .map((part) => part.charAt(0).toUpperCase() + part.slice(1))
+    .join(' ')
 }
 
 function readDemoMode(): DemoMode {

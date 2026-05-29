@@ -7,7 +7,7 @@ size: large
 
 ## Status
 
-Strict replay and update-mode source rewriting are implemented and tested. Missing pieces are the small runnable example and final end-to-end verification.
+Strict replay, update-mode source rewriting, and a small opt-in Calculator demo are implemented and tested. Missing piece is the final verification/PR cleanup pass.
 
 ## Assumptions
 
@@ -29,7 +29,7 @@ Strict replay and update-mode source rewriting are implemented and tested. Missi
 - [x] In update mode, ask a pluggable planner for missing recipes and write them back into the source test file. _Added `DemoPlanner` plus `src/inline-source-updater.ts`._
 - [x] In strict mode, prove the same test can replay using only checked-in `how`/condition recipes. _Covered by `tests/demo-helper.strict.test.ts` using only explicit recipes._
 - [x] Add tests for strict replay, strict missing-recipe failure, and update-mode inline source rewriting. _Added strict and update-mode Vitest specs, including stale recipe replacement._
-- [ ] Add a small runnable demo spec that starts from natural language and can be upgraded into deterministic replay.
+- [x] Add a small runnable demo spec that starts from natural language and can be upgraded into deterministic replay. _Added `examples/small-computer-demo.test.ts` plus `pnpm demo:small`; verified it updates the natural-language step, then replays it under strict mode._
 - [ ] Update this task with implementation notes as work lands.
 
 ## Original Prompt
@@ -91,3 +91,4 @@ going until you get to something like the above. you can make executive decision
 - 2026-05-29: Added a root private package for TypeScript/Vitest development. `@types/node` uses the current published `25.x` line because a Node 26 type package is not published yet.
 - 2026-05-29: Added the first strict-mode tracer bullet. `demo.run` executes preconditions, `how`, and postconditions in order, and strict mode rejects natural-language-only steps.
 - 2026-05-29: Added update mode. Missing recipes and failing recipes call a pluggable planner, execute the planned replacement, then rewrite the matching `demo.run(...)` call in the source test file during async disposal.
+- 2026-05-29: Added the opt-in small demo. `pnpm demo:small` runs `DEMO_MODE=update` followed by `DEMO_MODE=strict`; the update phase generated a deterministic Calculator `peekaboo app launch` recipe, and the strict phase replayed it successfully.

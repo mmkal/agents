@@ -6,7 +6,9 @@
     "test": "vitest run",
     "typecheck": "tsc --noEmit",
     "verify": "pnpm typecheck && pnpm test",
-    "demo:small": "DEMO_MODE=update vitest run examples/small-computer-demo.test.ts"
+    "demo:small": "pnpm demo:small:update && pnpm demo:small:strict",
+    "demo:small:strict": "RUN_DEMO_SMALL=1 DEMO_MODE=strict vitest run examples/small-computer-demo.test.ts",
+    "demo:small:update": "RUN_DEMO_SMALL=1 DEMO_MODE=update vitest run examples/small-computer-demo.test.ts"
   },
   "devDependencies": {
     "@types/node": "^25.9.1",

@@ -2,7 +2,11 @@ import { mkdtempSync, readFileSync, rmSync, writeFileSync } from 'node:fs'
 import { tmpdir } from 'node:os'
 import { join } from 'node:path'
 import { expect, test } from 'vitest'
-import { createDemoHelper, type DemoCommand } from '../src/demo-helper.ts'
+import {
+  createDemoHelper,
+  createPeekabooAgentPlanner,
+  type DemoCommand,
+} from '../src/demo-helper.ts'
 
 test('update mode writes planned recipes into natural-language-only runs on disposal', async () => {
   using source = new SourceFileFixture(`
@@ -115,6 +119,27 @@ test('calculator demo', async () => {
   expect(source.read()).toContain(`await demo.run('open calculator', {
     how: demo.exec(\`peekaboo app launch Calculator --wait-until-ready\`),
   })`)
+})
+
+test('default planner turns app launch language into deterministic peekaboo commands', async () => {
+  const planner = createPeekabooAgentPlanner()
+
+  await expect(
+    planner({
+      step: 'open the Calculator application',
+      testState: { currentTestName: expect.getState().currentTestName },
+    }),
+  ).resolves.toMatchObject({
+    preconditions: {
+      command: 'peekaboo permissions --json',
+    },
+    how: {
+      command: "peekaboo app launch 'Calculator' --wait-until-ready",
+    },
+    postconditions: {
+      command: 'peekaboo app list --json',
+    },
+  })
 })
 
 class SourceFileFixture implements Disposable {
