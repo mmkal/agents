@@ -7,7 +7,7 @@ size: large
 
 ## Status
 
-Strict replay, update-mode source rewriting, and a small opt-in Calculator demo are implemented and tested. Missing piece is the final verification/PR cleanup pass.
+Strict replay, update-mode source rewriting, a small Calculator demo, and a larger Cursor/TypeScript demo are implemented and tested. Missing piece is the final PR cleanup pass.
 
 ## Assumptions
 
@@ -30,7 +30,8 @@ Strict replay, update-mode source rewriting, and a small opt-in Calculator demo 
 - [x] In strict mode, prove the same test can replay using only checked-in `how`/condition recipes. _Covered by `tests/demo-helper.strict.test.ts` using only explicit recipes._
 - [x] Add tests for strict replay, strict missing-recipe failure, and update-mode inline source rewriting. _Added strict and update-mode Vitest specs, including stale recipe replacement._
 - [x] Add a small runnable demo spec that starts from natural language and can be upgraded into deterministic replay. _Added `examples/small-computer-demo.test.ts` plus `pnpm demo:small`; verified it updates the natural-language step, then replays it under strict mode._
-- [ ] Update this task with implementation notes as work lands.
+- [x] Add a larger Cursor/TypeScript demo that approximates the original prompt without video. _Added `examples/tsc-cursor-demo.test.ts` plus `pnpm demo:tsc-cursor`; verified it prepares a throwaway project, opens Cursor, fixes a TypeScript error, runs `tsc`, opens the JS output, and highlights the fixed line._
+- [x] Update this task with implementation notes as work lands. _Kept this section updated after each implementation checkpoint._
 
 ## Original Prompt
 
@@ -92,3 +93,4 @@ going until you get to something like the above. you can make executive decision
 - 2026-05-29: Added the first strict-mode tracer bullet. `demo.run` executes preconditions, `how`, and postconditions in order, and strict mode rejects natural-language-only steps.
 - 2026-05-29: Added update mode. Missing recipes and failing recipes call a pluggable planner, execute the planned replacement, then rewrite the matching `demo.run(...)` call in the source test file during async disposal.
 - 2026-05-29: Added the opt-in small demo. `pnpm demo:small` runs `DEMO_MODE=update` followed by `DEMO_MODE=strict`; the update phase generated a deterministic Calculator `peekaboo app launch` recipe, and the strict phase replayed it successfully.
+- 2026-05-29: Added an opt-in Cursor/TypeScript demo. It intentionally skips video, uses a throwaway `/tmp` workspace, and passed via `pnpm demo:tsc-cursor`.
