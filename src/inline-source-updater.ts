@@ -1,5 +1,5 @@
 import { Node, Project, SyntaxKind } from 'ts-morph'
-import type { DemoCommand, DemoRecipe } from './demo-helper.ts'
+import type { DemoCleanup, DemoCommand, DemoRecipe } from './demo-helper.ts'
 
 export type DemoRunSourceUpdate = {
   occurrenceIndex: number
@@ -79,6 +79,12 @@ function serializeRecipe(recipe: DemoRecipe) {
 
   properties.push(`${propertyIndent}how: ${serializeCommands(recipe.how, propertyIndent)}`)
 
+  if (recipe.onDispose) {
+    properties.push(
+      `${propertyIndent}onDispose: ${serializeCleanups(recipe.onDispose, propertyIndent)}`,
+    )
+  }
+
   if (recipe.postconditions) {
     properties.push(
       `${propertyIndent}postconditions: ${serializeCommands(recipe.postconditions, propertyIndent)}`,
@@ -86,6 +92,28 @@ function serializeRecipe(recipe: DemoRecipe) {
   }
 
   return `{\n${properties.join(',\n')},\n}`
+}
+
+function serializeCleanups(
+  cleanup: DemoCleanup | DemoCleanup[],
+  propertyIndent: string,
+) {
+  if (!Array.isArray(cleanup)) {
+    return serializeCleanup(cleanup)
+  }
+
+  const itemIndent = `${propertyIndent}  `
+  return `[\n${cleanup
+    .map((item) => `${itemIndent}${serializeCleanup(item)}`)
+    .join(',\n')},\n${propertyIndent}]`
+}
+
+function serializeCleanup(cleanup: DemoCleanup) {
+  if (typeof cleanup === 'function') {
+    return cleanup.toString()
+  }
+
+  return serializeCommand(cleanup)
 }
 
 function serializeCommands(

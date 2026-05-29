@@ -3,12 +3,11 @@ import { join } from 'node:path'
 import { expect, test } from 'vitest'
 import { createDemoHelper } from '../src/demo-helper.ts'
 
-const runDemo = process.env.RUN_DEMO_TSC_CURSOR === '1' ? test : test.skip
 const workspace = join(tmpdir(), 'demo-helper-tsc-cursor')
 const testFile = join(workspace, 'test.ts')
 const outputFile = join(workspace, 'test.js')
 
-runDemo(
+test(
   'demo tsc in Cursor without video',
   async () => {
     await using demo = createDemoHelper(expect.getState())
@@ -24,6 +23,7 @@ runDemo(
         ),
         demo.exec('pnpm install', { cwd: workspace, timeoutMs: 120_000 }),
       ],
+      onDispose: demo.exec(`rm -rf ${shellQuote(workspace)}`),
       postconditions: demo.exec('test -d node_modules/typescript', { cwd: workspace }),
     })
 

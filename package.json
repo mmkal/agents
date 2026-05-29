@@ -3,13 +3,13 @@
   "private": true,
   "type": "module",
   "scripts": {
-    "test": "vitest run",
+    "test": "vitest run tests",
     "typecheck": "tsc --noEmit",
     "verify": "pnpm typecheck && pnpm test",
-    "demo:small": "pnpm demo:small:update && pnpm demo:small:strict",
-    "demo:small:strict": "RUN_DEMO_SMALL=1 DEMO_MODE=strict vitest run examples/small-computer-demo.test.ts",
-    "demo:small:update": "RUN_DEMO_SMALL=1 DEMO_MODE=update vitest run examples/small-computer-demo.test.ts",
-    "demo:tsc-cursor": "RUN_DEMO_TSC_CURSOR=1 DEMO_MODE=strict vitest run examples/tsc-cursor-demo.test.ts"
+    "demo:small": "vitest run examples/small-computer-demo.test.ts",
+    "demo:small:strict": "DEMO_MODE=strict vitest run examples/small-computer-demo.test.ts",
+    "demo:small:update": "DEMO_MODE=update vitest run examples/small-computer-demo.test.ts",
+    "demo:tsc-cursor": "vitest run examples/tsc-cursor-demo.test.ts"
   },
   "devDependencies": {
     "@types/node": "^25.9.1",

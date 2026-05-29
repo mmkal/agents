@@ -54,3 +54,45 @@ test('strict replay fails when a step has no recipe', async () => {
     /DEMO_MODE=strict cannot run/,
   )
 })
+
+test('strict replay runs step cleanup on demo disposal in reverse order', async () => {
+  const transcript: string[] = []
+
+  {
+    await using demo = createDemoHelper(
+      {
+        currentTestName: expect.getState().currentTestName,
+        testPath: fileURLToPath(import.meta.url),
+      },
+      {
+        mode: 'strict',
+        runner: async (command, context) => {
+          transcript.push(`${context.phase}: ${command.command}`)
+        },
+      },
+    )
+
+    await demo.run('open calculator', {
+      how: demo.exec('peekaboo app launch Calculator --wait-until-ready'),
+      onDispose: async () => {
+        transcript.push('callback: close calculator scratch window')
+      },
+    })
+    await demo.run('open notes', {
+      how: demo.exec('peekaboo app launch Notes --wait-until-ready'),
+      onDispose: demo.exec('peekaboo app quit --app Notes'),
+    })
+
+    expect(transcript).toEqual([
+      'how: peekaboo app launch Calculator --wait-until-ready',
+      'how: peekaboo app launch Notes --wait-until-ready',
+    ])
+  }
+
+  expect(transcript).toEqual([
+    'how: peekaboo app launch Calculator --wait-until-ready',
+    'how: peekaboo app launch Notes --wait-until-ready',
+    'dispose: peekaboo app quit --app Notes',
+    'callback: close calculator scratch window',
+  ])
+})

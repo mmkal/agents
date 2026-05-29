@@ -14,7 +14,7 @@ export type DemoCommand = {
   timeoutMs?: number
 }
 
-export type DemoCommandPhase = 'precondition' | 'how' | 'postcondition'
+export type DemoCommandPhase = 'precondition' | 'how' | 'postcondition' | 'dispose'
 
 export type DemoCommandRunner = (
   command: DemoCommand,
@@ -27,8 +27,13 @@ export type DemoCommandRunner = (
 export type DemoRecipe = {
   preconditions?: DemoCommand | DemoCommand[]
   how: DemoCommand | DemoCommand[]
+  onDispose?: DemoCleanup | DemoCleanup[]
   postconditions?: DemoCommand | DemoCommand[]
 }
+
+export type DemoCleanup = DemoCommand | DemoDisposeFn
+
+export type DemoDisposeFn = () => Promise<void> | void
 
 export type DemoTestState = {
   currentTestName?: string
@@ -67,6 +72,7 @@ export class DemoHelper implements AsyncDisposable {
   private mode: DemoMode
   private pendingSourceUpdates: DemoRunSourceUpdate[] = []
   private planner: DemoPlanner
+  private disposeFns: DemoDisposeFn[] = []
   private runner: DemoCommandRunner
   private stepOccurrences = new Map<string, number>()
   private testState: DemoTestState
@@ -128,6 +134,8 @@ export class DemoHelper implements AsyncDisposable {
   }
 
   async [Symbol.asyncDispose]() {
+    await this.runDisposeFns()
+
     if (this.pendingSourceUpdates.length > 0) {
       if (!this.testState.testPath) {
         throw new Error('Cannot update demo source because expect state has no testPath')
@@ -145,7 +153,46 @@ export class DemoHelper implements AsyncDisposable {
   private async executeRecipe(step: string, recipe: DemoRecipe) {
     await this.runCommands(step, 'precondition', recipe.preconditions)
     await this.runCommands(step, 'how', recipe.how)
+    this.registerCleanup(step, recipe.onDispose)
     await this.runCommands(step, 'postcondition', recipe.postconditions)
+  }
+
+  private registerCleanup(
+    step: string,
+    cleanup: DemoCleanup | DemoCleanup[] | undefined,
+  ) {
+    for (const item of asCleanups(cleanup)) {
+      if (typeof item === 'function') {
+        this.disposeFns.push(item)
+        continue
+      }
+
+      this.disposeFns.push(async () => {
+        await this.runner(item, { phase: 'dispose', step })
+      })
+    }
+  }
+
+  private async runDisposeFns() {
+    const errors: unknown[] = []
+
+    for (const disposeFn of this.disposeFns.toReversed()) {
+      try {
+        await disposeFn()
+      } catch (error) {
+        errors.push(error)
+      }
+    }
+
+    this.disposeFns = []
+
+    if (errors.length === 1) {
+      throw errors[0]
+    }
+
+    if (errors.length > 1) {
+      throw new AggregateError(errors, 'Demo cleanup failed')
+    }
   }
 
   private nextOccurrenceIndex(step: string) {
@@ -201,6 +248,10 @@ function inferAppLaunchRecipe(step: string): DemoRecipe | undefined {
     how: {
       kind: 'exec',
       command: `peekaboo app launch ${shellQuote(appName)} --wait-until-ready`,
+    },
+    onDispose: {
+      kind: 'exec',
+      command: `peekaboo app quit --app ${shellQuote(appName)}`,
     },
     postconditions: {
       kind: 'exec',
@@ -259,6 +310,18 @@ function asCommands(commands: DemoCommand | DemoCommand[] | undefined) {
   }
 
   return [commands]
+}
+
+function asCleanups(cleanup: DemoCleanup | DemoCleanup[] | undefined) {
+  if (!cleanup) {
+    return []
+  }
+
+  if (Array.isArray(cleanup)) {
+    return cleanup
+  }
+
+  return [cleanup]
 }
 
 function shellQuote(value: string) {

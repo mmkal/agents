@@ -37,6 +37,10 @@ test('calculator demo', async () => {
               kind: 'exec',
               command: 'peekaboo app launch Calculator --wait-until-ready',
             },
+            onDispose: {
+              kind: 'exec',
+              command: 'peekaboo app quit --app Calculator',
+            },
             postconditions: { kind: 'exec', command: 'peekaboo app list --json' },
           }
         },
@@ -53,10 +57,12 @@ test('calculator demo', async () => {
     { command: 'peekaboo permissions --json' },
     { command: 'peekaboo app launch Calculator --wait-until-ready' },
     { command: 'peekaboo app list --json' },
+    { command: 'peekaboo app quit --app Calculator' },
   ])
   expect(source.read()).toContain(`await demo.run('open calculator', {
     preconditions: demo.exec(\`peekaboo permissions --json\`),
     how: demo.exec(\`peekaboo app launch Calculator --wait-until-ready\`),
+    onDispose: demo.exec(\`peekaboo app quit --app Calculator\`),
     postconditions: demo.exec(\`peekaboo app list --json\`),
   })`)
 })
@@ -135,6 +141,9 @@ test('default planner turns app launch language into deterministic peekaboo comm
     },
     how: {
       command: "peekaboo app launch 'Calculator' --wait-until-ready",
+    },
+    onDispose: {
+      command: "peekaboo app quit --app 'Calculator'",
     },
     postconditions: {
       command: 'peekaboo app list --json',
