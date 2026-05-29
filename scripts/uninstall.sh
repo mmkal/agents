@@ -36,7 +36,8 @@ for p in \
   "$HOME/.codex/AGENTS.md" \
   "$HOME/.pi/agent/AGENTS.md" \
   "$HOME/.pi/agent/keybindings.json" \
-  "$HOME/.pi/agent/keybindings.schema.json"
+  "$HOME/.pi/agent/keybindings.schema.json" \
+  "$HOME/.pi/agent/extensions"
 do
   unlink_if_points_here "$p"
 done

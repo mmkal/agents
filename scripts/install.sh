@@ -53,6 +53,7 @@ link "$REPO/claude/settings.json"    "$HOME/.claude/settings.json"
 # pi config files.
 link "$REPO/pi/keybindings.json"        "$HOME/.pi/agent/keybindings.json"
 link "$REPO/pi/keybindings.schema.json" "$HOME/.pi/agent/keybindings.schema.json"
+link "$REPO/pi/extensions"              "$HOME/.pi/agent/extensions"
 
 # Skills: one symlink per skill dir, into each tool's skills dir.
 # Pi also scans ~/.agents/skills, so don't install a Pi-specific link when the

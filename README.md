@@ -18,6 +18,7 @@ symlinks that make each tool pick it up.
 ├── opencode/              opencode-specific config (opencode.json, plugin/, etc.)
 ├── claude/                claude-code-specific config (settings.json, hook wiring)
 ├── codex/                 codex-specific config
+├── pi/                    pi-specific config (keybindings, extensions)
 ├── scripts/
 │   ├── install.sh         create all symlinks into the user's system
 │   ├── uninstall.sh       remove them (safely — only removes symlinks pointing into this repo)
