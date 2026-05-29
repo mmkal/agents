@@ -7,7 +7,7 @@ size: large
 
 ## Status
 
-Implementation has started. The root TypeScript/Vitest package is scaffolded; the main missing pieces are the helper API, source rewriter, tests, and a small runnable example.
+Strict replay is implemented and tested. Missing pieces are update-mode planning, inline source rewriting, broader tests, and the small runnable example.
 
 ## Assumptions
 
@@ -22,9 +22,9 @@ Implementation has started. The root TypeScript/Vitest package is scaffolded; th
 ## Checklist
 
 - [x] Add a root TypeScript/Vitest package without disturbing the tool-specific `opencode/package.json`. _Added root `package.json`, `tsconfig.json`, `vitest.config.ts`, and `pnpm-lock.yaml`; left `opencode/package.json` untouched._
-- [ ] Implement `createDemoHelper(expect.getState())` with async disposal and enough test-state parsing to find the calling test file.
-- [ ] Implement `demo.run(step, recipe?)` where recipes can declare `preconditions`, `how`, and `postconditions`.
-- [ ] Add deterministic recipe execution for shell commands, including `peekaboo` commands.
+- [x] Implement `createDemoHelper(expect.getState())` with async disposal and enough test-state parsing to find the calling test file. _Added `src/demo-helper.ts`; disposal is currently a no-op until source rewriting lands._
+- [x] Implement `demo.run(step, recipe?)` where recipes can declare `preconditions`, `how`, and `postconditions`. _Strict replay executes recipe phases in order via `demo.run`._
+- [x] Add deterministic recipe execution for shell commands, including `peekaboo` commands. _Added `demo.exec(...)`, `demo.peekaboo(...)`, and the default shell runner._
 - [ ] Add `DEMO_MODE=strict` and `DEMO_MODE=update` behavior.
 - [ ] In update mode, ask a pluggable planner for missing recipes and write them back into the source test file.
 - [ ] In strict mode, prove the same test can replay using only checked-in `how`/condition recipes.
@@ -89,3 +89,4 @@ going until you get to something like the above. you can make executive decision
 ## Implementation Notes
 
 - 2026-05-29: Added a root private package for TypeScript/Vitest development. `@types/node` uses the current published `25.x` line because a Node 26 type package is not published yet.
+- 2026-05-29: Added the first strict-mode tracer bullet. `demo.run` executes preconditions, `how`, and postconditions in order, and strict mode rejects natural-language-only steps.
