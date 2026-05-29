@@ -7,7 +7,7 @@ size: large
 
 ## Status
 
-Scoped and ready for implementation. No code has been added yet; the main decisions are to start with a small deterministic `peekaboo`-backed helper, support source-file updates behind `DEMO_MODE=update`, and keep strict replay as the verification target. Missing pieces are the root TypeScript package, helper API, source rewriter, tests, and a small runnable example.
+Implementation has started. The root TypeScript/Vitest package is scaffolded; the main missing pieces are the helper API, source rewriter, tests, and a small runnable example.
 
 ## Assumptions
 
@@ -21,7 +21,7 @@ Scoped and ready for implementation. No code has been added yet; the main decisi
 
 ## Checklist
 
-- [ ] Add a root TypeScript/Vitest package without disturbing the tool-specific `opencode/package.json`.
+- [x] Add a root TypeScript/Vitest package without disturbing the tool-specific `opencode/package.json`. _Added root `package.json`, `tsconfig.json`, `vitest.config.ts`, and `pnpm-lock.yaml`; left `opencode/package.json` untouched._
 - [ ] Implement `createDemoHelper(expect.getState())` with async disposal and enough test-state parsing to find the calling test file.
 - [ ] Implement `demo.run(step, recipe?)` where recipes can declare `preconditions`, `how`, and `postconditions`.
 - [ ] Add deterministic recipe execution for shell commands, including `peekaboo` commands.
@@ -88,3 +88,4 @@ going until you get to something like the above. you can make executive decision
 
 ## Implementation Notes
 
+- 2026-05-29: Added a root private package for TypeScript/Vitest development. `@types/node` uses the current published `25.x` line because a Node 26 type package is not published yet.
