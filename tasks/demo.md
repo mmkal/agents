@@ -7,7 +7,7 @@ size: large
 
 ## Status
 
-Strict replay is implemented and tested. Missing pieces are update-mode planning, inline source rewriting, broader tests, and the small runnable example.
+Strict replay and update-mode source rewriting are implemented and tested. Missing pieces are the small runnable example and final end-to-end verification.
 
 ## Assumptions
 
@@ -25,10 +25,10 @@ Strict replay is implemented and tested. Missing pieces are update-mode planning
 - [x] Implement `createDemoHelper(expect.getState())` with async disposal and enough test-state parsing to find the calling test file. _Added `src/demo-helper.ts`; disposal is currently a no-op until source rewriting lands._
 - [x] Implement `demo.run(step, recipe?)` where recipes can declare `preconditions`, `how`, and `postconditions`. _Strict replay executes recipe phases in order via `demo.run`._
 - [x] Add deterministic recipe execution for shell commands, including `peekaboo` commands. _Added `demo.exec(...)`, `demo.peekaboo(...)`, and the default shell runner._
-- [ ] Add `DEMO_MODE=strict` and `DEMO_MODE=update` behavior.
-- [ ] In update mode, ask a pluggable planner for missing recipes and write them back into the source test file.
-- [ ] In strict mode, prove the same test can replay using only checked-in `how`/condition recipes.
-- [ ] Add tests for strict replay, strict missing-recipe failure, and update-mode inline source rewriting.
+- [x] Add `DEMO_MODE=strict` and `DEMO_MODE=update` behavior. _Strict mode rejects missing recipes; update mode plans missing or stale recipes and records rewrites._
+- [x] In update mode, ask a pluggable planner for missing recipes and write them back into the source test file. _Added `DemoPlanner` plus `src/inline-source-updater.ts`._
+- [x] In strict mode, prove the same test can replay using only checked-in `how`/condition recipes. _Covered by `tests/demo-helper.strict.test.ts` using only explicit recipes._
+- [x] Add tests for strict replay, strict missing-recipe failure, and update-mode inline source rewriting. _Added strict and update-mode Vitest specs, including stale recipe replacement._
 - [ ] Add a small runnable demo spec that starts from natural language and can be upgraded into deterministic replay.
 - [ ] Update this task with implementation notes as work lands.
 
@@ -90,3 +90,4 @@ going until you get to something like the above. you can make executive decision
 
 - 2026-05-29: Added a root private package for TypeScript/Vitest development. `@types/node` uses the current published `25.x` line because a Node 26 type package is not published yet.
 - 2026-05-29: Added the first strict-mode tracer bullet. `demo.run` executes preconditions, `how`, and postconditions in order, and strict mode rejects natural-language-only steps.
+- 2026-05-29: Added update mode. Missing recipes and failing recipes call a pluggable planner, execute the planned replacement, then rewrite the matching `demo.run(...)` call in the source test file during async disposal.
