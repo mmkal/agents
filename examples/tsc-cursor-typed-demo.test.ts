@@ -11,6 +11,7 @@ const outputFile = join(workspace, 'test.js')
 const cursorWindowTarget = `--app Cursor --window-title ${shellQuote(workspaceName)}`
 const waitForCursorWindow = `i=0; while [ "$i" -lt 50 ]; do peekaboo window list --app Cursor --json | rg ${shellQuote(workspaceName)} >/dev/null && exit 0; i=$((i + 1)); sleep 0.2; done; echo ${shellQuote(`Cursor window not found for ${workspaceName}`)} >&2; exit 1`
 const closeCursorAgentsPane = `peekaboo see ${cursorWindowTarget} --json | node -e ${shellQuote(closeCursorAgentsPaneScript(workspaceName))}`
+const closeCursorAgentStillWorkingDialog = `peekaboo see ${cursorWindowTarget} --json | node -e ${shellQuote(exitZeroWhenLabelIsVisibleScript('Close Anyway'))} && peekaboo click ${shellQuote('Close Anyway')} ${cursorWindowTarget} || true`
 
 test(
   'demo tsc in Cursor by typing the program',
@@ -41,9 +42,11 @@ test(
         `peekaboo open ${shellQuote(workspace)} --app Cursor --wait-until-ready`,
         { timeoutMs: 60_000 },
       ),
-      onDispose: demo.exec(
-        `peekaboo window close ${cursorWindowTarget} || true`,
-      ),
+      onDispose: [
+        demo.exec(`peekaboo window close ${cursorWindowTarget} || true`),
+        demo.exec('peekaboo sleep 300'),
+        demo.exec(closeCursorAgentStillWorkingDialog),
+      ],
       postconditions: demo
         .exec('peekaboo app list --json')
         .json()
@@ -66,6 +69,8 @@ test(
     await demo.run('close the Cursor Agents pane if it is open', {
       how: [
         demo.exec(closeCursorAgentsPane),
+        demo.exec('peekaboo sleep 500'),
+        demo.exec(closeCursorAgentStillWorkingDialog),
         demo.exec('peekaboo sleep 500'),
         demo.exec(`peekaboo hotkey "cmd,1" ${cursorWindowTarget}`),
       ],
@@ -167,6 +172,18 @@ function cursorAgentsPaneIsVisible(data) {
     /^(New Agent|Command-line argument extraction)$|Add a follow-up|Plan, Build|Queued/.test(label),
   )
 }
+`
+}
+
+function exitZeroWhenLabelIsVisibleScript(label: string) {
+  return `
+let input = ''
+process.stdin.on('data', (chunk) => input += chunk)
+process.stdin.on('end', () => {
+  const payload = JSON.parse(input)
+  const labels = (payload.data.ui_elements || []).map((element) => String(element.label || ''))
+  process.exit(labels.includes(${JSON.stringify(label)}) ? 0 : 1)
+})
 `
 }
 
