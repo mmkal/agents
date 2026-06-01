@@ -1,10 +1,11 @@
+import { mkdtempSync } from 'node:fs'
 import { tmpdir } from 'node:os'
-import { join } from 'node:path'
+import { basename, join } from 'node:path'
 import { expect, test } from 'vitest'
 import { createDemoHelper } from '../src/demo-helper.ts'
 
-const workspaceName = 'demo-helper-tsc-cursor-peekaboo-type'
-const workspace = join(tmpdir(), workspaceName)
+const workspace = mkdtempSync(join(tmpdir(), 'demo-helper-tsc-cursor-peekaboo-type-'))
+const workspaceName = basename(workspace)
 const testFile = join(workspace, 'test.ts')
 const outputFile = join(workspace, 'test.js')
 const cursorWindowTarget = `--app Cursor --window-title ${shellQuote(workspaceName)}`
