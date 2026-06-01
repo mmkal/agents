@@ -56,6 +56,7 @@ export type DemoCommandRunner = (
   command: DemoCommand,
   context: {
     phase: DemoCommandPhase
+    signal: AbortSignal
     step: string
   },
 ) => Promise<DemoCommandResult | void>
@@ -78,9 +79,32 @@ export type DemoTestState = {
 
 export type DemoHelperOptions = {
   mode?: DemoMode
+  mouse?: DemoMouseGuardOptions | false
   planner?: DemoPlanner
   runner?: DemoCommandRunner
 }
+
+export type DemoMousePosition = {
+  x: number
+  y: number
+}
+
+export type DemoMouseGuardOptions = {
+  notifyMoved?: DemoMouseMovedNotifier
+  pollIntervalMs?: number
+  readPosition?: DemoMousePositionReader
+  tolerancePixels?: number
+}
+
+export type DemoMouseMovedNotifier = (event: DemoMouseMovedEvent) => Promise<void> | void
+
+export type DemoMouseMovedEvent = {
+  actual: DemoMousePosition
+  expected: DemoMousePosition
+  location: string
+}
+
+export type DemoMousePositionReader = () => Promise<DemoMousePosition>
 
 export type DemoPlanningRequest = {
   existingRecipe?: DemoRecipe
@@ -114,6 +138,7 @@ export class DemoHelper implements AsyncDisposable {
   private pendingSourceUpdates: DemoRunSourceUpdate[] = []
   private planner: DemoPlanner
   private disposeFns: DemoDisposeFn[] = []
+  private mouseGuard?: DemoMouseGuard
   private runner: DemoCommandRunner
   private stepsSoFar: string[] = []
   private stepOccurrences = new Map<string, number>()
@@ -127,6 +152,7 @@ export class DemoHelper implements AsyncDisposable {
         agentPlanner: this.mode === 'update' ? createPiDemoPlanner() : undefined,
       })
     this.runner = options.runner || runShellCommand
+    this.mouseGuard = createMouseGuard(options)
     this.testState = testState
   }
 
@@ -163,6 +189,10 @@ export class DemoHelper implements AsyncDisposable {
       await this.executeRecipe(step, recipe)
       this.stepsSoFar.push(step)
     } catch (error) {
+      if (error instanceof DemoMouseMovedError) {
+        throw error
+      }
+
       if (this.mode === 'strict') {
         throw error
       }
@@ -198,10 +228,21 @@ export class DemoHelper implements AsyncDisposable {
   }
 
   private async executeRecipe(step: string, recipe: DemoRecipe) {
-    await this.runCommands(step, 'precondition', recipe.preconditions)
-    await this.runCommands(step, 'how', recipe.how)
-    this.registerCleanup(step, recipe.onDispose)
-    await this.runCommands(step, 'postcondition', recipe.postconditions)
+    await this.mouseGuard?.beforeStep(step)
+
+    try {
+      await this.runCommands(step, 'precondition', recipe.preconditions)
+      await this.runCommands(step, 'how', recipe.how)
+      this.registerCleanup(step, recipe.onDispose)
+      await this.runCommands(step, 'postcondition', recipe.postconditions)
+      await this.mouseGuard?.afterStep(step)
+    } catch (error) {
+      if (error instanceof DemoMouseMovedError) {
+        throw error
+      }
+
+      throw error
+    }
   }
 
   private registerCleanup(
@@ -215,7 +256,11 @@ export class DemoHelper implements AsyncDisposable {
       }
 
       this.disposeFns.push(async () => {
-        await this.runner(item, { phase: 'dispose', step })
+        await this.runner(item, {
+          phase: 'dispose',
+          signal: new AbortController().signal,
+          step,
+        })
       })
     }
   }
@@ -254,7 +299,28 @@ export class DemoHelper implements AsyncDisposable {
     commands: DemoCommand | DemoCommand[] | undefined,
   ) {
     for (const command of asCommands(commands)) {
-      const result = await this.runner(command, { phase, step })
+      const mouseTracking = await this.mouseGuard?.trackCommand({
+        command,
+        phase,
+        step,
+      })
+
+      let result: DemoCommandResult | void
+
+      try {
+        result = await this.runner(command, {
+          phase,
+          signal: mouseTracking?.signal || new AbortController().signal,
+          step,
+        })
+      } catch (error) {
+        await mouseTracking?.finish().catch((mouseError) => {
+          throw mouseError
+        })
+        throw error
+      }
+
+      await mouseTracking?.finish()
       await runCommandCheck(command, result || { stderr: '', stdout: '' }, {
         phase,
         step,
@@ -633,6 +699,193 @@ function createExecCommand(
   return demoCommand
 }
 
+class DemoMouseMovedError extends Error {
+  constructor(event: DemoMouseMovedEvent) {
+    super(
+      [
+        `Mouse moved ${event.location}.`,
+        `Expected ${formatMousePosition(event.expected)} but saw ${formatMousePosition(event.actual)}.`,
+        'Aborting demo run.',
+      ].join(' '),
+    )
+    this.name = 'DemoMouseMovedError'
+  }
+}
+
+class DemoMouseGuard {
+  private expectedPosition?: DemoMousePosition
+  private notifyMoved: DemoMouseMovedNotifier
+  private pollIntervalMs: number
+  private readPosition: DemoMousePositionReader
+  private tolerancePixels: number
+
+  constructor(options: DemoMouseGuardOptions = {}) {
+    this.notifyMoved = options.notifyMoved || sayMouseMoved
+    this.pollIntervalMs = options.pollIntervalMs || 100
+    this.readPosition = options.readPosition || readSystemMousePosition
+    this.tolerancePixels = options.tolerancePixels || 2
+  }
+
+  async beforeStep(step: string) {
+    await this.assertMouseStill(`before step "${step}"`)
+  }
+
+  async afterStep(step: string) {
+    await this.assertMouseStill(`after step "${step}"`)
+  }
+
+  async trackCommand(context: {
+    command: DemoCommand
+    phase: DemoCommandPhase
+    step: string
+  }) {
+    await this.assertMouseStill(
+      `before ${context.phase} command in "${context.step}"`,
+    )
+
+    const abortController = new AbortController()
+
+    if (commandMayMoveMouse(context.command.command)) {
+      return {
+        finish: async () => {
+          this.expectedPosition = await this.readPosition()
+        },
+        signal: abortController.signal,
+      }
+    }
+
+    const monitor = this.monitorForMouseMovement({
+      abortController,
+      location: `during ${context.phase} command in "${context.step}"`,
+    })
+
+    return {
+      finish: async () => {
+        await monitor.stop()
+        await this.assertMouseStill(
+          `after ${context.phase} command in "${context.step}"`,
+        )
+      },
+      signal: abortController.signal,
+    }
+  }
+
+  private monitorForMouseMovement(options: {
+    abortController: AbortController
+    location: string
+  }) {
+    let error: DemoMouseMovedError | undefined
+    let polling = false
+
+    const timer = setInterval(() => {
+      if (polling || error) {
+        return
+      }
+
+      polling = true
+      void this.assertMouseStill(options.location)
+        .catch((movementError) => {
+          error = movementError
+          options.abortController.abort(movementError)
+        })
+        .finally(() => {
+          polling = false
+        })
+    }, this.pollIntervalMs)
+
+    return {
+      stop: async () => {
+        clearInterval(timer)
+
+        if (error) {
+          throw error
+        }
+      },
+    }
+  }
+
+  private async assertMouseStill(location: string) {
+    const actual = await this.readPosition()
+
+    if (!this.expectedPosition) {
+      this.expectedPosition = actual
+      return
+    }
+
+    if (mousePositionsMatch(actual, this.expectedPosition, this.tolerancePixels)) {
+      return
+    }
+
+    const event = {
+      actual,
+      expected: this.expectedPosition,
+      location,
+    }
+    const error = new DemoMouseMovedError(event)
+
+    try {
+      await this.notifyMoved(event)
+    } catch {}
+
+    throw error
+  }
+}
+
+function createMouseGuard(options: DemoHelperOptions) {
+  if (options.mouse === false) {
+    return undefined
+  }
+
+  if (options.runner && !options.mouse) {
+    return undefined
+  }
+
+  return new DemoMouseGuard(options.mouse || {})
+}
+
+function commandMayMoveMouse(command: string) {
+  return /\bpeekaboo\s+(click|drag|move|swipe)\b/.test(command)
+}
+
+function mousePositionsMatch(
+  actual: DemoMousePosition,
+  expected: DemoMousePosition,
+  tolerancePixels: number,
+) {
+  return (
+    Math.abs(actual.x - expected.x) <= tolerancePixels &&
+    Math.abs(actual.y - expected.y) <= tolerancePixels
+  )
+}
+
+function formatMousePosition(position: DemoMousePosition) {
+  return `${position.x},${position.y}`
+}
+
+async function readSystemMousePosition() {
+  const result = await runCommandForOutput(
+    createExecCommand('cliclick p', { timeoutMs: 5_000 }),
+  )
+  const match = result.stdout.trim().match(/^(-?\d+),(-?\d+)$/)
+
+  if (!match) {
+    throw new Error(`Could not read mouse position from cliclick: ${result.stdout}`)
+  }
+
+  return {
+    x: Number(match[1]),
+    y: Number(match[2]),
+  }
+}
+
+async function sayMouseMoved() {
+  await runCommandForOutput(
+    createExecCommand(`say ${shellQuote('mouse moved, aborting')}`, {
+      timeoutMs: 10_000,
+    }),
+  )
+}
+
 async function runCommandCheck(
   command: DemoCommand,
   result: DemoCommandResult,
@@ -675,8 +928,13 @@ function commandEnvironment(env: Record<string, string> | undefined) {
   }
 }
 
-async function runCommandForOutput(command: DemoCommand) {
+async function runCommandForOutput(command: DemoCommand, signal?: AbortSignal) {
   return await new Promise<DemoCommandResult>((resolve, reject) => {
+    if (signal?.aborted) {
+      reject(signal.reason || new Error(`Command aborted: ${command.command}`))
+      return
+    }
+
     const child = spawn(command.command, {
       cwd: command.cwd || process.cwd(),
       env: commandEnvironment(command.env),
@@ -687,10 +945,44 @@ async function runCommandForOutput(command: DemoCommand) {
     let stdout = ''
     let stderr = ''
     const timeoutMs = command.timeoutMs || 30_000
+    let settled = false
+
+    const finish = () => {
+      if (settled) {
+        return false
+      }
+
+      settled = true
+      clearTimeout(timer)
+      signal?.removeEventListener('abort', abort)
+      return true
+    }
+
+    const finishResolve = (value: DemoCommandResult) => {
+      if (finish()) {
+        resolve(value)
+      }
+    }
+
+    const finishReject = (error: Error) => {
+      if (finish()) {
+        reject(error)
+      }
+    }
+
+    const abort = () => {
+      child.kill('SIGTERM')
+      finishReject(signal?.reason || new Error(`Command aborted: ${command.command}`))
+    }
+
     const timer = setTimeout(() => {
       child.kill('SIGTERM')
-      reject(new Error(`Command timed out after ${timeoutMs}ms: ${command.command}`))
+      finishReject(
+        new Error(`Command timed out after ${timeoutMs}ms: ${command.command}`),
+      )
     }, timeoutMs)
+
+    signal?.addEventListener('abort', abort, { once: true })
 
     child.stdout.on('data', (chunk) => {
       stdout += String(chunk)
@@ -699,18 +991,15 @@ async function runCommandForOutput(command: DemoCommand) {
       stderr += String(chunk)
     })
     child.on('error', (error) => {
-      clearTimeout(timer)
-      reject(error)
+      finishReject(error)
     })
     child.on('close', (code) => {
-      clearTimeout(timer)
-
       if (code === 0) {
-        resolve({ stderr, stdout })
+        finishResolve({ stderr, stdout })
         return
       }
 
-      reject(
+      finishReject(
         new Error(
           [
             `Command failed with exit code ${code}: ${command.command}`,
@@ -725,6 +1014,11 @@ async function runCommandForOutput(command: DemoCommand) {
   })
 }
 
-async function runShellCommand(command: DemoCommand) {
-  return await runCommandForOutput(command)
+async function runShellCommand(
+  command: DemoCommand,
+  context: {
+    signal: AbortSignal
+  },
+) {
+  return await runCommandForOutput(command, context.signal)
 }

@@ -60,13 +60,13 @@ test(
     await demo.run('type test.ts with a small type error in Cursor', {
       how: [
         demo.exec(`peekaboo click --coords 430,110 ${cursorWindowTarget}`),
-        demo.exec(`peekaboo hotkey "cmd,a" ${cursorWindowTarget}`),
+        demo.exec(`peekaboo hotkey "cmd,a" ${cursorWindowTarget} --no-auto-focus`),
         demo.exec(
-          `peekaboo type ${shellQuote(typescriptProgramWithBug)} ${cursorWindowTarget} --profile linear --delay 10`,
+          `peekaboo type ${shellQuote(typescriptProgramWithBug)} ${cursorWindowTarget} --profile linear --delay 10 --no-auto-focus`,
           { timeoutMs: 60_000 },
         ),
         demo.exec('peekaboo sleep 500'),
-        demo.exec(`peekaboo hotkey "cmd,s" ${cursorWindowTarget}`),
+        demo.exec(`peekaboo hotkey "cmd,s" ${cursorWindowTarget} --no-auto-focus`),
         demo.exec('peekaboo sleep 500'),
       ],
       postconditions: demo.exec(
@@ -80,10 +80,10 @@ test(
         demo.exec(`peekaboo click --coords 430,110 ${cursorWindowTarget}`),
         demo.exec(`peekaboo click --coords 610,148 ${cursorWindowTarget} --double`),
         demo.exec(
-          `peekaboo type ${shellQuote('string')} ${cursorWindowTarget} --profile linear --delay 10`,
+          `peekaboo type ${shellQuote('string')} ${cursorWindowTarget} --profile linear --delay 10 --no-auto-focus`,
         ),
         demo.exec('peekaboo sleep 300'),
-        demo.exec(`peekaboo hotkey "cmd,s" ${cursorWindowTarget}`),
+        demo.exec(`peekaboo hotkey "cmd,s" ${cursorWindowTarget} --no-auto-focus`),
         demo.exec('peekaboo sleep 500'),
       ],
       postconditions: demo.exec(

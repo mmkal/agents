@@ -193,3 +193,83 @@ test('strict replay fails when a command check returns false', async () => {
     }),
   ).rejects.toThrow(/Command check failed/)
 })
+
+test('strict replay aborts and says when the mouse moves between steps', async () => {
+  const transcript: string[] = []
+  const notifications: string[] = []
+  let mouse = { x: 10, y: 20 }
+
+  await using demo = createDemoHelper(
+    {
+      currentTestName: expect.getState().currentTestName,
+      testPath: fileURLToPath(import.meta.url),
+    },
+    {
+      mode: 'strict',
+      mouse: {
+        notifyMoved: async () => {
+          notifications.push('mouse moved, aborting')
+        },
+        readPosition: async () => mouse,
+      },
+      runner: async (command) => {
+        transcript.push(command.command)
+      },
+    },
+  )
+
+  await demo.run('first step', {
+    how: demo.exec('true'),
+  })
+
+  mouse = { x: 50, y: 20 }
+
+  await expect(
+    demo.run('second step', {
+      how: demo.exec('should not run'),
+    }),
+  ).rejects.toThrow(/Mouse moved before step "second step"/)
+
+  expect(transcript).toEqual(['true'])
+  expect(notifications).toEqual(['mouse moved, aborting'])
+})
+
+test('strict replay updates the expected mouse position after peekaboo pointer commands', async () => {
+  const transcript: string[] = []
+  let mouse = { x: 10, y: 20 }
+
+  await using demo = createDemoHelper(
+    {
+      currentTestName: expect.getState().currentTestName,
+      testPath: fileURLToPath(import.meta.url),
+    },
+    {
+      mode: 'strict',
+      mouse: {
+        notifyMoved: async () => {
+          throw new Error('mouse should not be reported as moved')
+        },
+        readPosition: async () => mouse,
+      },
+      runner: async (command) => {
+        transcript.push(command.command)
+
+        if (command.command.startsWith('peekaboo click ')) {
+          mouse = { x: 100, y: 200 }
+        }
+      },
+    },
+  )
+
+  await demo.run('click in Cursor', {
+    how: demo.exec('peekaboo click --coords 100,200 --app Cursor'),
+  })
+  await demo.run('type without moving the mouse', {
+    how: demo.exec('peekaboo type hello --app Cursor'),
+  })
+
+  expect(transcript).toEqual([
+    'peekaboo click --coords 100,200 --app Cursor',
+    'peekaboo type hello --app Cursor',
+  ])
+})
