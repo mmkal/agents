@@ -8,6 +8,7 @@ const workspace = join(tmpdir(), workspaceName)
 const testFile = join(workspace, 'test.ts')
 const outputFile = join(workspace, 'test.js')
 const cursorWindowTarget = `--app Cursor --window-title ${shellQuote(workspaceName)}`
+const waitForCursorWindow = `i=0; while [ "$i" -lt 50 ]; do peekaboo window list --app Cursor --json | rg ${shellQuote(workspaceName)} >/dev/null && exit 0; i=$((i + 1)); sleep 0.2; done; echo ${shellQuote(`Cursor window not found for ${workspaceName}`)} >&2; exit 1`
 
 test(
   'demo tsc in Cursor by typing the program',
@@ -52,7 +53,7 @@ test(
           `peekaboo open ${shellQuote(testFile)} --app Cursor --wait-until-ready`,
           { timeoutMs: 60_000 },
         ),
-        demo.exec('peekaboo sleep 1000'),
+        demo.exec(waitForCursorWindow),
       ],
     })
 
