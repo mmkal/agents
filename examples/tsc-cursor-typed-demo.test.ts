@@ -55,11 +55,13 @@ test(
           { timeoutMs: 60_000 },
         ),
         demo.exec(waitForCursorWindow),
+        demo.exec(`peekaboo hotkey "cmd,1" ${cursorWindowTarget}`),
       ],
     })
 
     await demo.run('type test.ts with a small type error in Cursor', {
       how: [
+        demo.exec(`peekaboo hotkey "cmd,1" ${cursorWindowTarget}`),
         demo.exec(`peekaboo click --coords 430,110 ${cursorWindowTarget}`),
         demo.exec(`peekaboo hotkey "cmd,a" ${cursorWindowTarget} --no-auto-focus`),
         demo.exec(
@@ -78,6 +80,7 @@ test(
 
     await demo.run('fix the type error', {
       how: [
+        demo.exec(`peekaboo hotkey "cmd,1" ${cursorWindowTarget}`),
         demo.exec(`peekaboo click --coords 430,110 ${cursorWindowTarget}`),
         demo.exec(`peekaboo click --coords 610,148 ${cursorWindowTarget} --double`),
         demo.exec(
