@@ -33,7 +33,12 @@ test(
         `peekaboo open ${shellQuote(workspace)} --app Cursor --wait-until-ready`,
         { timeoutMs: 60_000 },
       ),
-      postconditions: demo.exec('peekaboo app list --json'),
+      postconditions: demo
+        .exec('peekaboo app list --json')
+        .json()
+        .check((data: any) =>
+          data.data.apps.some((app: any) => app.name === 'Cursor'),
+        ),
     })
 
     await demo.run('create test.ts with a small type error', {

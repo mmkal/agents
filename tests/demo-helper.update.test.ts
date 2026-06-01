@@ -191,6 +191,61 @@ test('calculator demo', async () => {
   )
 })
 
+test('update mode writes checked postconditions back to source', async () => {
+  using source = new SourceFileFixture(`
+import { expect, test } from 'vitest'
+import { createDemoHelper } from '../src/demo-helper.ts'
+
+test('cursor demo', async () => {
+  await using demo = createDemoHelper(expect.getState())
+  await demo.run('open cursor')
+})
+`)
+  await using commandFactory = createDemoHelper(
+    {
+      currentTestName: expect.getState().currentTestName,
+      testPath: source.path,
+    },
+    { mode: 'strict' },
+  )
+
+  {
+    await using demo = createDemoHelper(
+      {
+        currentTestName: 'cursor demo',
+        testPath: source.path,
+      },
+      {
+        mode: 'update',
+        planner: async () => ({
+          how: commandFactory.exec('peekaboo app launch Cursor --wait-until-ready'),
+          postconditions: commandFactory
+            .exec('peekaboo app list --json')
+            .json()
+            .check((data: any) =>
+              data.data.apps.some((app: any) => app.name === 'Cursor'),
+            ),
+        }),
+        runner: async () => ({
+          stderr: '',
+          stdout: JSON.stringify({
+            data: {
+              apps: [{ name: 'Cursor' }],
+            },
+          }),
+        }),
+      },
+    )
+
+    await demo.run('open cursor')
+  }
+
+  expect(source.read()).toContain(
+    'postconditions: demo.exec(`peekaboo app list --json`).json().check(',
+  )
+  expect(source.read()).toContain('app.name === "Cursor"')
+})
+
 test('default planner turns app launch language into deterministic peekaboo commands', async () => {
   const planner = createDemoPlanner()
 

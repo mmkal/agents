@@ -1,6 +1,10 @@
 import { fileURLToPath } from 'node:url'
 import { expect, test } from 'vitest'
-import { createDemoHelper, type DemoCommand } from '../src/demo-helper.ts'
+import {
+  createDemoHelper,
+  type DemoCommand,
+  type DemoCommandResult,
+} from '../src/demo-helper.ts'
 
 test('strict replay runs preconditions, how commands, and postconditions', async () => {
   const transcript: DemoCommand[] = []
@@ -95,4 +99,97 @@ test('strict replay runs step cleanup on demo disposal in reverse order', async 
     'dispose: peekaboo app quit --app Notes',
     'callback: close calculator scratch window',
   ])
+})
+
+test('strict replay can check command stdout in postconditions', async () => {
+  await using demo = createDemoHelper(
+    {
+      currentTestName: expect.getState().currentTestName,
+      testPath: fileURLToPath(import.meta.url),
+    },
+    {
+      mode: 'strict',
+      runner: async (command): Promise<DemoCommandResult> => {
+        if (command.command === 'peekaboo app list --json') {
+          expect(command).toMatchObject({
+            command: 'peekaboo app list --json',
+          })
+        }
+
+        return {
+          stderr: '',
+          stdout: JSON.stringify({
+            data: {
+              apps: [{ name: 'Cursor' }],
+            },
+          }),
+        }
+      },
+    },
+  )
+
+  await demo.run('open cursor', {
+    how: demo.exec('true'),
+    postconditions: demo
+      .exec('peekaboo app list --json')
+      .check(({ stdout }) =>
+        JSON.parse(stdout).data.apps.some((app: any) => app.name === 'Cursor'),
+      ),
+  })
+})
+
+test('strict replay can parse command stdout as json before checking it', async () => {
+  await using demo = createDemoHelper(
+    {
+      currentTestName: expect.getState().currentTestName,
+      testPath: fileURLToPath(import.meta.url),
+    },
+    {
+      mode: 'strict',
+      runner: async (): Promise<DemoCommandResult> => ({
+        stderr: '',
+        stdout: JSON.stringify({
+          data: {
+            apps: [{ name: 'Cursor' }],
+          },
+        }),
+      }),
+    },
+  )
+
+  await demo.run('open cursor', {
+    how: demo.exec('true'),
+    postconditions: demo
+      .exec('peekaboo app list --json')
+      .json()
+      .check((data: any) => data.data.apps.some((app: any) => app.name === 'Cursor')),
+  })
+})
+
+test('strict replay fails when a command check returns false', async () => {
+  await using demo = createDemoHelper(
+    {
+      currentTestName: expect.getState().currentTestName,
+      testPath: fileURLToPath(import.meta.url),
+    },
+    {
+      mode: 'strict',
+      runner: async (): Promise<DemoCommandResult> => ({
+        stderr: '',
+        stdout: JSON.stringify({ data: { apps: [] } }),
+      }),
+    },
+  )
+
+  await expect(
+    demo.run('open cursor', {
+      how: demo.exec('true'),
+      postconditions: demo
+        .exec('peekaboo app list --json')
+        .json()
+        .check((data: any) =>
+          data.data.apps.some((app: any) => app.name === 'Cursor'),
+        ),
+    }),
+  ).rejects.toThrow(/Command check failed/)
 })

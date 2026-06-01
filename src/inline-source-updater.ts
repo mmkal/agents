@@ -132,12 +132,19 @@ function serializeCommands(
 
 function serializeCommand(command: DemoCommand) {
   const options = serializeCommandOptions(command)
+  const commandText = options
+    ? `demo.exec(${templateLiteral(command.command)}, ${options})`
+    : `demo.exec(${templateLiteral(command.command)})`
 
-  if (options) {
-    return `demo.exec(${templateLiteral(command.command)}, ${options})`
+  if (!command.checkSource) {
+    return commandText
   }
 
-  return `demo.exec(${templateLiteral(command.command)})`
+  if (command.checkMode === 'json') {
+    return `${commandText}.json().check(${command.checkSource})`
+  }
+
+  return `${commandText}.check(${command.checkSource})`
 }
 
 function serializeCommandOptions(command: DemoCommand) {

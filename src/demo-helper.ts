@@ -12,7 +12,43 @@ export type DemoCommand = {
   cwd?: string
   env?: Record<string, string>
   timeoutMs?: number
+  check?: (check: DemoCommandCheck) => FluentDemoCommand
+  json?: () => DemoJsonCommand
+  checkMode?: DemoCommandCheckMode
+  checkResult?: DemoCommandCheck
+  checkSource?: string
 }
+
+export type FluentDemoCommand = DemoCommand & {
+  check: (check: DemoCommandCheck) => FluentDemoCommand
+  json: () => DemoJsonCommand
+}
+
+export type DemoCommandResult = {
+  stderr: string
+  stdout: string
+}
+
+export type DemoCommandCheckContext = DemoCommandResult & {
+  command: DemoCommand
+  phase: DemoCommandPhase
+  step: string
+}
+
+export type DemoCommandCheck = (
+  context: DemoCommandCheckContext,
+) => boolean | void | Promise<boolean | void>
+
+export type DemoJsonCommand = {
+  check: (check: DemoJsonCommandCheck) => DemoCommand
+}
+
+export type DemoJsonCommandCheck = (
+  data: any,
+  context: DemoCommandCheckContext,
+) => boolean | void | Promise<boolean | void>
+
+export type DemoCommandCheckMode = 'raw' | 'json'
 
 export type DemoCommandPhase = 'precondition' | 'how' | 'postcondition' | 'dispose'
 
@@ -22,7 +58,7 @@ export type DemoCommandRunner = (
     phase: DemoCommandPhase
     step: string
   },
-) => Promise<void>
+) => Promise<DemoCommandResult | void>
 
 export type DemoRecipe = {
   preconditions?: DemoCommand | DemoCommand[]
@@ -94,12 +130,8 @@ export class DemoHelper implements AsyncDisposable {
     this.testState = testState
   }
 
-  exec(command: string, options: DemoCommandOptions = {}): DemoCommand {
-    return {
-      kind: 'exec',
-      command,
-      ...options,
-    }
+  exec(command: string, options: DemoCommandOptions = {}): FluentDemoCommand {
+    return createExecCommand(command, options)
   }
 
   peekaboo(command: string, options: DemoCommandOptions = {}): DemoCommand {
@@ -222,7 +254,11 @@ export class DemoHelper implements AsyncDisposable {
     commands: DemoCommand | DemoCommand[] | undefined,
   ) {
     for (const command of asCommands(commands)) {
-      await this.runner(command, { phase, step })
+      const result = await this.runner(command, { phase, step })
+      await runCommandCheck(command, result || { stderr: '', stdout: '' }, {
+        phase,
+        step,
+      })
     }
   }
 }
@@ -281,22 +317,16 @@ function inferAppLaunchRecipe(step: string): DemoRecipe | undefined {
   }
 
   return {
-    preconditions: {
-      kind: 'exec',
-      command: 'peekaboo permissions --json',
-    },
-    how: {
-      kind: 'exec',
-      command: `peekaboo app launch ${shellQuote(appName)} --wait-until-ready`,
-    },
-    onDispose: {
-      kind: 'exec',
-      command: `peekaboo app quit --app ${shellQuote(appName)}`,
-    },
-    postconditions: {
-      kind: 'exec',
-      command: 'peekaboo app list --json',
-    },
+    preconditions: createExecCommand('peekaboo permissions --json'),
+    how: createExecCommand(
+      `peekaboo app launch ${shellQuote(appName)} --wait-until-ready`,
+    ),
+    onDispose: createExecCommand(`peekaboo app quit --app ${shellQuote(appName)}`),
+    postconditions: createExecCommand('peekaboo app list --json')
+      .json()
+      .check((data: any) =>
+        data.data.apps.some((app: any) => app.name === appName),
+      ),
   }
 }
 
@@ -315,16 +345,17 @@ function inferCalculatorInputRecipe(step: string): DemoRecipe | undefined {
   return {
     how: [
       {
-        kind: 'exec',
-        command: 'peekaboo see --app Calculator --json >/dev/null',
+        ...createExecCommand('peekaboo see --app Calculator --json >/dev/null'),
       },
       {
-        kind: 'exec',
-        command: 'peekaboo press escape --app Calculator && peekaboo press escape --app Calculator',
+        ...createExecCommand(
+          'peekaboo press escape --app Calculator && peekaboo press escape --app Calculator',
+        ),
       },
       {
-        kind: 'exec',
-        command: `peekaboo type ${shellQuote(`${left}*${right}=`)} --app Calculator --profile linear --delay 0`,
+        ...createExecCommand(
+          `peekaboo type ${shellQuote(`${left}*${right}=`)} --app Calculator --profile linear --delay 0`,
+        ),
       },
     ],
   }
@@ -340,10 +371,9 @@ function inferCalculatorConfirmationRecipe(step: string): DemoRecipe | undefined
   const expected = digitsOnly(match[1])
 
   return {
-    how: {
-      kind: 'exec',
-      command: `peekaboo see --app Calculator --json | node -e ${shellQuote(calculatorResultAssertionScript(expected))}`,
-    },
+    how: createExecCommand(
+      `peekaboo see --app Calculator --json | node -e ${shellQuote(calculatorResultAssertionScript(expected))}`,
+    ),
   }
 }
 
@@ -451,16 +481,14 @@ function commandsFromPiField(value: any): DemoCommand | DemoCommand[] | undefine
 
 function commandFromPiValue(value: any): DemoCommand {
   if (typeof value === 'string') {
-    return { kind: 'exec', command: value }
+    return createExecCommand(value)
   }
 
   if (!value || typeof value.command !== 'string') {
     throw new Error(`Invalid Pi planner command: ${JSON.stringify(value)}`)
   }
 
-  return {
-    kind: 'exec',
-    command: value.command,
+  return createExecCommand(value.command, {
     ...(value.cwd ? { cwd: String(value.cwd) } : {}),
     ...(value.env
       ? {
@@ -473,7 +501,7 @@ function commandFromPiValue(value: any): DemoCommand {
         }
       : {}),
     ...(value.timeoutMs ? { timeoutMs: Number(value.timeoutMs) } : {}),
-  }
+  })
 }
 
 function assertNoAgentCommands(commands: DemoCleanup | DemoCleanup[] | undefined) {
@@ -491,11 +519,14 @@ function assertNoAgentCommands(commands: DemoCleanup | DemoCleanup[] | undefined
 }
 
 async function runPiPrompt(prompt: string) {
-  return await runCommandForOutput({
-    kind: 'exec',
-    command: `pi --no-session --no-context-files --no-skills --no-extensions --tools bash -p ${shellQuote(prompt)}`,
-    timeoutMs: 300_000,
-  })
+  const result = await runCommandForOutput(
+    createExecCommand(
+      `pi --no-session --no-context-files --no-skills --no-extensions --tools bash -p ${shellQuote(prompt)}`,
+      { timeoutMs: 300_000 },
+    ),
+  )
+
+  return result.stdout
 }
 
 function appNameFromStep(step: string) {
@@ -566,6 +597,68 @@ function shellQuote(value: string) {
   return `'${value.replace(/'/g, `'\\''`)}'`
 }
 
+function createExecCommand(
+  command: string,
+  options: DemoCommandOptions = {},
+  checkOptions: {
+    checkMode?: DemoCommandCheckMode
+    checkResult?: DemoCommandCheck
+    checkSource?: string
+  } = {},
+): FluentDemoCommand {
+  const demoCommand = {
+    kind: 'exec' as const,
+    command,
+    ...options,
+    ...checkOptions,
+  } as FluentDemoCommand
+
+  demoCommand.check = (check) =>
+    createExecCommand(command, options, {
+      checkMode: 'raw',
+      checkResult: check,
+      checkSource: check.toString(),
+    })
+
+  demoCommand.json = () => ({
+    check: (check) =>
+      createExecCommand(command, options, {
+        checkMode: 'json',
+        checkResult: async (context) =>
+          await check(JSON.parse(context.stdout), context),
+        checkSource: check.toString(),
+      }),
+  })
+
+  return demoCommand
+}
+
+async function runCommandCheck(
+  command: DemoCommand,
+  result: DemoCommandResult,
+  context: {
+    phase: DemoCommandPhase
+    step: string
+  },
+) {
+  if (!command.checkResult) {
+    return
+  }
+
+  const passed = await command.checkResult({
+    ...result,
+    command,
+    phase: context.phase,
+    step: context.step,
+  })
+
+  if (passed === false) {
+    throw new Error(
+      `Command check failed for ${context.phase} in "${context.step}": ${command.command}`,
+    )
+  }
+}
+
 function commandEnvironment(env: Record<string, string> | undefined) {
   return {
     ...process.env,
@@ -583,7 +676,7 @@ function commandEnvironment(env: Record<string, string> | undefined) {
 }
 
 async function runCommandForOutput(command: DemoCommand) {
-  return await new Promise<string>((resolve, reject) => {
+  return await new Promise<DemoCommandResult>((resolve, reject) => {
     const child = spawn(command.command, {
       cwd: command.cwd || process.cwd(),
       env: commandEnvironment(command.env),
@@ -613,7 +706,7 @@ async function runCommandForOutput(command: DemoCommand) {
       clearTimeout(timer)
 
       if (code === 0) {
-        resolve(stdout)
+        resolve({ stderr, stdout })
         return
       }
 
@@ -633,51 +726,5 @@ async function runCommandForOutput(command: DemoCommand) {
 }
 
 async function runShellCommand(command: DemoCommand) {
-  await new Promise<void>((resolve, reject) => {
-    const child = spawn(command.command, {
-      cwd: command.cwd || process.cwd(),
-      env: commandEnvironment(command.env),
-      shell: true,
-      stdio: ['ignore', 'pipe', 'pipe'],
-    })
-
-    let stdout = ''
-    let stderr = ''
-    const timeoutMs = command.timeoutMs || 30_000
-    const timer = setTimeout(() => {
-      child.kill('SIGTERM')
-      reject(new Error(`Command timed out after ${timeoutMs}ms: ${command.command}`))
-    }, timeoutMs)
-
-    child.stdout.on('data', (chunk) => {
-      stdout += String(chunk)
-    })
-    child.stderr.on('data', (chunk) => {
-      stderr += String(chunk)
-    })
-    child.on('error', (error) => {
-      clearTimeout(timer)
-      reject(error)
-    })
-    child.on('close', (code) => {
-      clearTimeout(timer)
-
-      if (code === 0) {
-        resolve()
-        return
-      }
-
-      reject(
-        new Error(
-          [
-            `Command failed with exit code ${code}: ${command.command}`,
-            stdout.trim() ? `stdout:\n${stdout.trim()}` : '',
-            stderr.trim() ? `stderr:\n${stderr.trim()}` : '',
-          ]
-            .filter(Boolean)
-            .join('\n\n'),
-        ),
-      )
-    })
-  })
+  return await runCommandForOutput(command)
 }

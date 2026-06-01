@@ -8,7 +8,12 @@ test('small calculator demo', async () => {
     preconditions: demo.exec(`peekaboo permissions --json`),
     how: demo.exec(`peekaboo app launch 'Calculator' --wait-until-ready`),
     onDispose: demo.exec(`peekaboo app quit --app 'Calculator'`),
-    postconditions: demo.exec(`peekaboo app list --json`),
+    postconditions: demo
+      .exec(`peekaboo app list --json`)
+      .json()
+      .check((data: any) =>
+        data.data.apps.some((app: any) => app.name === 'Calculator'),
+      ),
   })
 
   await demo.run('type in 13854502 and multiply it by 4 and then press equals', {
