@@ -10,6 +10,7 @@ const testFile = join(workspace, 'test.ts')
 const outputFile = join(workspace, 'test.js')
 const cursorWindowTarget = `--app Cursor --window-title ${shellQuote(workspaceName)}`
 const waitForCursorWindow = `i=0; while [ "$i" -lt 50 ]; do peekaboo window list --app Cursor --json | rg ${shellQuote(workspaceName)} >/dev/null && exit 0; i=$((i + 1)); sleep 0.2; done; echo ${shellQuote(`Cursor window not found for ${workspaceName}`)} >&2; exit 1`
+const closeCursorAgentsPane = `peekaboo see ${cursorWindowTarget} --json | node -e ${shellQuote(closeCursorAgentsPaneScript(workspaceName))}`
 
 test(
   'demo tsc in Cursor by typing the program',
@@ -40,6 +41,9 @@ test(
         `peekaboo open ${shellQuote(workspace)} --app Cursor --wait-until-ready`,
         { timeoutMs: 60_000 },
       ),
+      onDispose: demo.exec(
+        `peekaboo window close ${cursorWindowTarget} || true`,
+      ),
       postconditions: demo
         .exec('peekaboo app list --json')
         .json()
@@ -59,17 +63,29 @@ test(
       ],
     })
 
+    await demo.run('close the Cursor Agents pane if it is open', {
+      how: [
+        demo.exec(closeCursorAgentsPane),
+        demo.exec('peekaboo sleep 500'),
+        demo.exec(`peekaboo hotkey "cmd,1" ${cursorWindowTarget}`),
+      ],
+      postconditions: demo
+        .exec(`peekaboo see ${cursorWindowTarget} --json`)
+        .json()
+        .check((data: any) => !cursorAgentsPaneIsVisible(data)),
+    })
+
     await demo.run('type test.ts with a small type error in Cursor', {
       how: [
         demo.exec(`peekaboo hotkey "cmd,1" ${cursorWindowTarget}`),
         demo.exec(`peekaboo click --coords 430,110 ${cursorWindowTarget}`),
-        demo.exec(`peekaboo hotkey "cmd,a" ${cursorWindowTarget} --no-auto-focus`),
+        demo.exec(`peekaboo hotkey "cmd,a" --no-auto-focus`),
         demo.exec(
-          `peekaboo type ${shellQuote(typescriptProgramWithBug)} ${cursorWindowTarget} --profile linear --delay 10 --no-auto-focus`,
+          `peekaboo type ${shellQuote(typescriptProgramWithBug)} --profile linear --delay 10 --no-auto-focus`,
           { timeoutMs: 60_000 },
         ),
         demo.exec('peekaboo sleep 500'),
-        demo.exec(`peekaboo hotkey "cmd,s" ${cursorWindowTarget} --no-auto-focus`),
+        demo.exec(`peekaboo hotkey "cmd,s" --no-auto-focus`),
         demo.exec('peekaboo sleep 500'),
       ],
       postconditions: demo.exec(
@@ -84,10 +100,10 @@ test(
         demo.exec(`peekaboo click --coords 430,110 ${cursorWindowTarget}`),
         demo.exec(`peekaboo click --coords 610,148 ${cursorWindowTarget} --double`),
         demo.exec(
-          `peekaboo type ${shellQuote('string')} ${cursorWindowTarget} --profile linear --delay 10 --no-auto-focus`,
+          `peekaboo type ${shellQuote('string')} --profile linear --delay 10 --no-auto-focus`,
         ),
         demo.exec('peekaboo sleep 300'),
-        demo.exec(`peekaboo hotkey "cmd,s" ${cursorWindowTarget} --no-auto-focus`),
+        demo.exec(`peekaboo hotkey "cmd,s" --no-auto-focus`),
         demo.exec('peekaboo sleep 500'),
       ],
       postconditions: demo.exec(
@@ -123,4 +139,44 @@ console.log(greeting)
 
 function shellQuote(value: string) {
   return `'${value.replace(/'/g, `'\\''`)}'`
+}
+
+function closeCursorAgentsPaneScript(windowTitle: string) {
+  return `
+let input = ''
+process.stdin.on('data', (chunk) => input += chunk)
+process.stdin.on('end', () => {
+  const payload = JSON.parse(input)
+
+  if (!cursorAgentsPaneIsVisible(payload.data)) {
+    return
+  }
+
+  const { spawnSync } = require('node:child_process')
+  const result = spawnSync(
+    'peekaboo',
+    ['hotkey', 'cmd,alt,b', '--app', 'Cursor', '--window-title', ${JSON.stringify(windowTitle)}],
+    { stdio: 'inherit' },
+  )
+  process.exit(result.status || 0)
+})
+
+function cursorAgentsPaneIsVisible(data) {
+  const labels = (data.ui_elements || []).map((element) => String(element.label || ''))
+  return labels.some((label) =>
+    /^(New Agent|Command-line argument extraction)$|Add a follow-up|Plan, Build|Queued/.test(label),
+  )
+}
+`
+}
+
+function cursorAgentsPaneIsVisible(data: any) {
+  const labels = (data.ui_elements || []).map((element: any) =>
+    String(element.label || ''),
+  )
+  return labels.some((label: string) =>
+    /^(New Agent|Command-line argument extraction)$|Add a follow-up|Plan, Build|Queued/.test(
+      label,
+    ),
+  )
 }
