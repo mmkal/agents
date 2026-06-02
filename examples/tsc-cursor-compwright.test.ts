@@ -1,3 +1,4 @@
+import dedent from 'dedent'
 import { spawn } from 'node:child_process'
 import { existsSync, mkdtempSync } from 'node:fs'
 import * as fs from 'node:fs/promises'
@@ -34,11 +35,11 @@ test('tsc in Cursor', async () => {
   expect(await computer.glob('*')).toContain('test.ts')
   expect(await computer.glob('node_modules/typescript/package.json')).toHaveLength(1)
 
-  expect(await computer.permissions()).toMatchObject({ // <<< peekaboo permissions --json as a method
+  expect(await computer.permissions()).toMatchObject({
     permissions: expect.objectContaining({ name: "Accessibility", isGranted: true })
   })
 
-  await using ide = await computer.open('.', { app: "Cursor", waitUntilReady: true }) // <<< peekaboo open <path> --app Cursor --wait-until-ready as a method
+  await using ide = await computer.open('.', { app: "Cursor", waitUntilReady: true })
 
   await ide.hotkey('cmd,k')
   await ide.hotkey('cmd,w')
@@ -46,13 +47,15 @@ test('tsc in Cursor', async () => {
   await computer.open('test.ts', { app: "Cursor", waitUntilReady: true })
 
   await ide.hotkey('cmd,1')
-  await ide.hotkey('escape')
-  await ide.hotkey('escape')
-
   await ide.click(ide.center())
-  await ide.hotkey('cmd,a', { noAutoFocus: true })
 
-  await ide.type(typescriptProgramWithBug, { profile: "linear", delay: 10, noAutoFocus: true })
+  const tsWithBug = dedent`
+    const nameArg = process.argv.find((arg) => arg.startsWith('--name='))
+    const username: number = nameArg.split('=')[1] || 'demo user'
+    
+    console.log(\`Hello, \${username}!\`)
+  `
+  await ide.type(tsWithBug, { profile: "linear", delay: 10, noAutoFocus: true })
 
   await ide.hotkey('cmd,s', { noAutoFocus: true })
 
@@ -61,7 +64,7 @@ test('tsc in Cursor', async () => {
   await ide.hotkey('cmd,1')
   await ide.hotkey('escape')
 
-  const numberText = ide.ocr({ text: 'number' })
+  const numberText = ide.ocr({ text: 'number' }) // wait for the number text to be visible - do this before hovering on the type error because otherwise there will be multiple instances of the text "number"
   await numberText.waitFor()
 
   await ide.ocr({ text: 'username:' }).hover()
@@ -89,12 +92,6 @@ test('tsc in Cursor', async () => {
 },
 180_000,
 )
-
-const typescriptProgramWithBug = `const nameArg = process.argv.find((arg) => arg.startsWith('--name='))
-const username: number = nameArg.split('=')[1] || 'demo user'
-
-console.log(\`Hello, \${username}!\`)
-`
 
 function shellQuote(value: string) {
   return `'${value.replace(/'/g, `'\\''`)}'`
@@ -396,7 +393,6 @@ class PeekabooWindow implements AsyncDisposable {
     await this.exec`peekaboo hotkey ${keys} ${raw(targetFlags)} ${raw(
       options.noAutoFocus ? '--no-auto-focus' : '',
     )}`
-    await this.sleep(100)
   }
 
   async press(keys: string, options: PressOptions = {}) {
