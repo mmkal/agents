@@ -36,11 +36,10 @@ test(
       scripts: { build: 'tsc' },
       devDependencies: { '@types/node': '^25.9.1', typescript: '^5.9.3'},
     } satisfies tf.PackageJson)
-    await computer.exec({ timeout: 120_000 })`pnpm install` // <<< exec(...) configures the exec method and returns another exec method with that config
+    await computer.exec({ timeout: 120_000 })`pnpm install`
 
     await computer.writeFile('test.ts', '')
 
-    // use normal assertions for file system checks
     expect(await computer.glob('*')).toContain('test.ts')
     expect(await computer.glob('node_modules/typescript/package.json')).toHaveLength(1)
 
@@ -72,12 +71,15 @@ test(
 
     await ide.hotkey('cmd,1')
     await ide.hotkey('escape')
-    
+
+    const numberType = ide.ocr({ text: 'number' })
+    await numberType.waitFor()
+
     await ide.ocr({ text: 'username:' }).hover()
     await ide.ocr({ text: "Type 'string' is not assignable to type 'number'" }).waitFor()
     await ide.sleep(1000)
 
-    await ide.ocr({ text: ': number' }).dblclick()
+    await numberType.dblclick()
     const clipboard = await ide.copySelection()
     expect(clipboard.new).toBe('number')
 
