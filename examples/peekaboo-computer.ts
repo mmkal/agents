@@ -37,6 +37,21 @@ type ClickTarget = {
   coords: string
 }
 
+type GuardedActionOptions = {
+  updatesMousePosition: boolean
+}
+
+type MousePosition = {
+  x: number
+  y: number
+}
+
+type MouseMovedEvent = {
+  actual: MousePosition
+  expected: MousePosition
+  location: string
+}
+
 type OcrOptions = {
   text: string
 }
@@ -197,6 +212,7 @@ class PeekabooWindow implements AsyncDisposable {
   private clipboardSlot: string
   private directory: string
   private exec: ComputerExec
+  private mouseGuard: PeekabooMouseGuard
   private ocrCaptureIndex = 0
   private windowBounds: PeekabooBounds
   private windowId: number
@@ -212,6 +228,9 @@ class PeekabooWindow implements AsyncDisposable {
     this.windowBounds = options.windowBounds
     this.windowId = options.windowId
     this.exec = createExec(() => process.cwd())
+    this.mouseGuard = new PeekabooMouseGuard({
+      windowId: this.windowId,
+    })
   }
 
   async [Symbol.asyncDispose]() {
@@ -223,8 +242,14 @@ class PeekabooWindow implements AsyncDisposable {
   }
 
   async click(target: ClickTarget) {
-    await this.exec`peekaboo click --coords ${target.coords} ${raw(this.targetFlags())}`
-    await this.sleep(100)
+    await this.guardedAction(
+      'click',
+      { updatesMousePosition: true },
+      async () => {
+        await this.exec`peekaboo click --coords ${target.coords} ${raw(this.targetFlags())}`
+        await this.sleep(100)
+      },
+    )
   }
 
   center(): ClickTarget {
@@ -263,18 +288,30 @@ class PeekabooWindow implements AsyncDisposable {
   async hotkey(keys: string, options: { noAutoFocus?: boolean } = {}) {
     const targetFlags = options.noAutoFocus ? '' : this.targetFlags()
 
-    await this.exec`peekaboo hotkey ${keys} ${raw(targetFlags)} ${raw(
-      options.noAutoFocus ? '--no-auto-focus' : '',
-    )}`
+    await this.guardedAction(
+      `hotkey ${keys}`,
+      { updatesMousePosition: false },
+      async () => {
+        await this.exec`peekaboo hotkey ${keys} ${raw(targetFlags)} ${raw(
+          options.noAutoFocus ? '--no-auto-focus' : '',
+        )}`
+      },
+    )
   }
 
   async press(keys: string, options: { noAutoFocus?: boolean } = {}) {
     const targetFlags = options.noAutoFocus ? '' : this.targetFlags()
 
-    await this.exec`peekaboo press ${keys} ${raw(targetFlags)} ${raw(
-      options.noAutoFocus ? '--no-auto-focus' : '',
-    )}`
-    await this.sleep(100)
+    await this.guardedAction(
+      `press ${keys}`,
+      { updatesMousePosition: false },
+      async () => {
+        await this.exec`peekaboo press ${keys} ${raw(targetFlags)} ${raw(
+          options.noAutoFocus ? '--no-auto-focus' : '',
+        )}`
+        await this.sleep(100)
+      },
+    )
   }
 
   locator(target: ClickTarget) {
@@ -355,13 +392,36 @@ class PeekabooWindow implements AsyncDisposable {
   ) {
     const targetFlags = options.noAutoFocus ? '' : this.targetFlags()
 
-    await this.exec`peekaboo type --text ${text} ${raw(targetFlags)} --profile ${raw(options.profile)} --delay ${raw(String(options.delay))} ${raw(
-      options.noAutoFocus ? '--no-auto-focus' : '',
-    )}`
+    await this.guardedAction(
+      'type',
+      { updatesMousePosition: true },
+      async () => {
+        await this.exec`peekaboo type --text ${text} ${raw(targetFlags)} --profile ${raw(options.profile)} --delay ${raw(String(options.delay))} ${raw(
+          options.noAutoFocus ? '--no-auto-focus' : '',
+        )}`
+      },
+    )
   }
 
   targetFlags() {
     return `--window-id ${this.windowId}`
+  }
+
+  async guardedAction<T>(
+    name: string,
+    options: GuardedActionOptions,
+    action: () => Promise<T>,
+  ) {
+    await this.mouseGuard.beforeAction(name)
+    const result = await action()
+
+    if (options.updatesMousePosition) {
+      await this.mouseGuard.acceptCurrentPosition()
+    } else {
+      await this.mouseGuard.afterAction(name)
+    }
+
+    return result
   }
 
   private async captureWindowImage() {
@@ -405,13 +465,19 @@ class PeekabooLocator {
   }
 
   async dblclick() {
-    await runShellCommand(
-      `peekaboo click --coords ${shellQuote(this.target.coords)} ${this.window.targetFlags()} --double`,
-      {
-        cwd: process.cwd(),
+    await this.window.guardedAction(
+      'dblclick',
+      { updatesMousePosition: true },
+      async () => {
+        await runShellCommand(
+          `peekaboo click --coords ${shellQuote(this.target.coords)} ${this.window.targetFlags()} --double`,
+          {
+            cwd: process.cwd(),
+          },
+        )
+        await this.window.sleep(100)
       },
     )
-    await this.window.sleep(100)
   }
 }
 
@@ -426,32 +492,50 @@ class PeekabooOcrLocator {
   }
 
   async click() {
-    const coords = await this.windowCoordinates()
-    await this.window.click({ coords: coordsString(coords) })
+    await this.window.guardedAction(
+      'ocr.click',
+      { updatesMousePosition: true },
+      async () => {
+        const coords = await this.windowCoordinates()
+        await runShellCommand(
+          `peekaboo click --coords ${shellQuote(coordsString(coords))} ${this.window.targetFlags()}`,
+          { cwd: process.cwd() },
+        )
+        await this.window.sleep(100)
+      },
+    )
   }
 
   async dblclick() {
-    const coords = await this.windowCoordinates()
+    await this.window.guardedAction(
+      'ocr.dblclick',
+      { updatesMousePosition: true },
+      async () => {
+        const coords = await this.windowCoordinates()
 
-    await runShellCommand(
-      `peekaboo click --coords ${shellQuote(coordsString(coords))} ${this.window.targetFlags()} --double`,
-      {
-        cwd: process.cwd(),
+        await runShellCommand(
+          `peekaboo click --coords ${shellQuote(coordsString(coords))} ${this.window.targetFlags()} --double`,
+          { cwd: process.cwd() },
+        )
+        await this.window.sleep(100)
       },
     )
-    await this.window.sleep(100)
   }
 
   async hover() {
-    const coords = await this.screenCoordinates()
+    await this.window.guardedAction(
+      'ocr.hover',
+      { updatesMousePosition: true },
+      async () => {
+        const coords = await this.screenCoordinates()
 
-    await runShellCommand(
-      `peekaboo move --coords ${shellQuote(coordsString(coords))} ${this.window.targetFlags()} --duration 150 --steps 5 --profile linear`,
-      {
-        cwd: process.cwd(),
+        await runShellCommand(
+          `peekaboo move --coords ${shellQuote(coordsString(coords))} ${this.window.targetFlags()} --duration 150 --steps 5 --profile linear`,
+          { cwd: process.cwd() },
+        )
+        await this.window.sleep(100)
       },
     )
-    await this.window.sleep(100)
   }
 
   async info(): Promise<{
@@ -514,51 +598,149 @@ class PeekabooOcrLocator {
   }
 
   async select() {
-    const bounds = await this.windowTextBounds()
-    const from = coordsString({
-      relativeTo: 'window',
-      x: bounds.x,
-      y: bounds.y,
-    })
-    const to = coordsString({
-      relativeTo: 'window',
-      x: bounds.x + bounds.width,
-      y: bounds.y + bounds.height,
-    })
+    await this.window.guardedAction(
+      'ocr.select',
+      { updatesMousePosition: true },
+      async () => {
+        const bounds = await this.windowTextBounds()
+        const from = coordsString({
+          relativeTo: 'window',
+          x: bounds.x,
+          y: bounds.y,
+        })
+        const to = coordsString({
+          relativeTo: 'window',
+          x: bounds.x + bounds.width,
+          y: bounds.y + bounds.height,
+        })
 
-    await runShellCommand(
-      `peekaboo drag --from-coords ${shellQuote(from)} --to-coords ${shellQuote(to)} ${this.window.targetFlags()} --duration 100 --steps 5`,
-      {
-        cwd: process.cwd(),
+        await runShellCommand(
+          `peekaboo drag --from-coords ${shellQuote(from)} --to-coords ${shellQuote(to)} ${this.window.targetFlags()} --duration 100 --steps 5`,
+          {
+            cwd: process.cwd(),
+          },
+        )
+        await this.window.sleep(100)
       },
     )
-    await this.window.sleep(100)
   }
 
   async waitFor() {
-    const deadline = Date.now() + 5_000
-    let lastError: unknown
+    return await this.window.guardedAction(
+      'ocr.waitFor',
+      { updatesMousePosition: false },
+      async () => {
+        const deadline = Date.now() + 5_000
+        let lastError: unknown
 
-    while (Date.now() < deadline) {
-      try {
-        this.match = undefined
-        await this.resolve()
-        return this
-      } catch (error) {
-        lastError = error
-      }
+        while (Date.now() < deadline) {
+          try {
+            this.match = undefined
+            await this.resolve()
+            return this
+          } catch (error) {
+            lastError = error
+          }
 
-      await this.window.sleep(100)
-    }
+          await this.window.sleep(100)
+        }
 
-    throw new Error(
-      `Timed out waiting for OCR text ${JSON.stringify(this.options.text)}. ${String(lastError)}`,
+        throw new Error(
+          `Timed out waiting for OCR text ${JSON.stringify(this.options.text)}. ${String(lastError)}`,
+        )
+      },
     )
   }
 
   private resolve() {
     this.match = this.match || this.window.findOcrMatch(this.options)
     return this.match
+  }
+}
+
+class PeekabooWindowClosedAfterMouseMoveError extends Error {
+  constructor(windowId: number, event: MouseMovedEvent) {
+    super(
+      [
+        'Current window closed while test was paused after mouse movement.',
+        `Window id: ${windowId}.`,
+        `Mouse moved ${event.location}.`,
+        `Expected ${formatMousePosition(event.expected)} but saw ${formatMousePosition(event.actual)}.`,
+      ].join(' '),
+    )
+    this.name = 'PeekabooWindowClosedAfterMouseMoveError'
+  }
+}
+
+class PeekabooMouseGuard {
+  private expectedPosition?: MousePosition
+  private pauseSettleMs = 1_000
+  private pollIntervalMs = 100
+  private tolerancePixels = 2
+  private windowId: number
+
+  constructor(options: { windowId: number }) {
+    this.windowId = options.windowId
+  }
+
+  async beforeAction(action: string) {
+    await this.assertMouseStill(`before ${action}`)
+  }
+
+  async afterAction(action: string) {
+    await this.assertMouseStill(`after ${action}`)
+  }
+
+  async acceptCurrentPosition() {
+    this.expectedPosition = await readSystemMousePosition()
+  }
+
+  private async assertMouseStill(location: string) {
+    const actual = await readSystemMousePosition()
+
+    if (!this.expectedPosition) {
+      this.expectedPosition = actual
+      return
+    }
+
+    if (mousePositionsMatch(actual, this.expectedPosition, this.tolerancePixels)) {
+      return
+    }
+
+    const event = {
+      actual,
+      expected: this.expectedPosition,
+      location,
+    }
+
+    sayMouseMoved()
+    await this.pauseUntilMouseSettlesOrWindowCloses(event)
+  }
+
+  private async pauseUntilMouseSettlesOrWindowCloses(event: MouseMovedEvent) {
+    let lastPosition = event.actual
+    let settledSince = Date.now()
+
+    while (true) {
+      if (!(await peekabooWindowIsOpen(this.windowId))) {
+        throw new PeekabooWindowClosedAfterMouseMoveError(this.windowId, event)
+      }
+
+      await sleep(this.pollIntervalMs)
+
+      const actual = await readSystemMousePosition()
+
+      if (mousePositionsMatch(actual, lastPosition, this.tolerancePixels)) {
+        if (Date.now() - settledSince >= this.pauseSettleMs) {
+          this.expectedPosition = actual
+          return
+        }
+        continue
+      }
+
+      lastPosition = actual
+      settledSince = Date.now()
+    }
   }
 }
 
@@ -684,6 +866,79 @@ async function findPeekabooWindow(
 
 async function sleep(ms: number) {
   await new Promise((resolve) => setTimeout(resolve, ms))
+}
+
+async function readSystemMousePosition() {
+  const result = await runShellCommand('cliclick p', {
+    cwd: process.cwd(),
+  })
+  const match = result.stdout.trim().match(/^(-?\d+),(-?\d+)$/)
+
+  if (!match) {
+    throw new Error(`Could not read mouse position from cliclick: ${result.stdout}`)
+  }
+
+  return {
+    x: Number(match[1]),
+    y: Number(match[2]),
+  }
+}
+
+async function peekabooWindowIsOpen(windowId: number) {
+  try {
+    const result = await runShellCommand('peekaboo window list --json', {
+      cwd: process.cwd(),
+    })
+    const payload = JSON.parse(result.stdout)
+    const windows = Array.isArray(payload.data && payload.data.windows)
+      ? payload.data.windows
+      : []
+
+    return windows.some((window: any) => Number(window.window_id) === windowId)
+  } catch {
+    return false
+  }
+}
+
+function mousePositionsMatch(
+  actual: MousePosition,
+  expected: MousePosition,
+  tolerancePixels: number,
+) {
+  return (
+    Math.abs(actual.x - expected.x) <= tolerancePixels &&
+    Math.abs(actual.y - expected.y) <= tolerancePixels
+  )
+}
+
+function formatMousePosition(position: MousePosition) {
+  return `${position.x},${position.y}`
+}
+
+let activeSayProcess: ReturnType<typeof spawn> | undefined
+
+function sayMouseMoved() {
+  if (activeSayProcess) {
+    activeSayProcess.kill('SIGTERM')
+    activeSayProcess = undefined
+  }
+
+  const child = spawn('say', ['mouse moved, pausing'], {
+    stdio: 'ignore',
+  })
+
+  activeSayProcess = child
+  child.on('error', () => {
+    if (activeSayProcess === child) {
+      activeSayProcess = undefined
+    }
+  })
+  child.on('exit', () => {
+    if (activeSayProcess === child) {
+      activeSayProcess = undefined
+    }
+  })
+  child.unref()
 }
 
 function centerOfScreenBounds(bounds: ScreenBounds): ScreenCoordinates {
