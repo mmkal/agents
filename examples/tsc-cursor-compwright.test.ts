@@ -75,10 +75,10 @@ test(
 
     const typeAnnotation = ide.ocr({ text: 'number' })
     expect(await typeAnnotation.screenCoordinates()).toMatchObject({ relativeTo: 'screen', x: expect.any(Number), y: expect.any(Number) })
-    const username = ide.ocr({ text: 'username:' })
-    await username.hover()
-    await ide.sleep(1000)
+    
+    await ide.ocr({ text: 'username:' }).hover()
     await ide.ocr({ text: "Type 'string' is not assignable to type 'number'" }).waitFor()
+    await ide.sleep(1000)
 
     await typeAnnotation.dblclick()
     const clipboard = await ide.copySelection() // does some kind of cmd-c, returns {new: <highlighted text>, old: <previous clipboard contents>}
