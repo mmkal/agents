@@ -2,105 +2,92 @@ import { spawn } from 'node:child_process'
 import { existsSync, mkdtempSync } from 'node:fs'
 import * as fs from 'node:fs/promises'
 import { tmpdir } from 'node:os'
-import { basename, join } from 'node:path'
+import { basename, isAbsolute, join } from 'node:path'
 import { expect, test } from 'vitest'
 import * as tf from 'type-fest'
 
-const workspace = mkdtempSync(join(tmpdir(), 'demo-helper-tsc-cursor-peekaboo-type-'))
-const workspaceName = basename(workspace)
-const testFile = join(workspace, 'test.ts')
-const outputFile = join(workspace, 'test.js')
-const editorFocusCoordinate = '610,110'
-const clipboardSlot = `demo-helper-${workspaceName}`
+test('tsc in Cursor', async () => {
+  await using computer = await PeekabooComputer.create(expect.getState())
 
-test(
-  'demo tsc in Cursor by typing the program',
-  async () => {
-    await using computer = await createPeekabooComputer(expect.getState())
+  await computer.exec`rm -rf ${computer.directory} && mkdir -p ${computer.directory}`
+  await computer.writeJsonFile('tsconfig.json', {
+    compilerOptions: {
+      module: 'NodeNext',
+      moduleResolution: 'NodeNext',
+      noEmitOnError: true,
+      pretty: false,
+      strict: true,
+      target: 'ES2022',
+      types: ['node'],
+    },
+    include: ['test.ts'],
+  } satisfies tf.TsConfigJson)
+  await computer.writeJsonFile('package.json', {
+    type: 'module',
+    scripts: { build: 'tsc' },
+    devDependencies: { '@types/node': '25.9.1', typescript: '5.9.3'},
+  } satisfies tf.PackageJson)
+  await computer.exec({ timeout: 120_000 })`pnpm install`
 
-    await computer.exec`rm -rf ${workspace} && mkdir -p ${workspace}` // << automatic shell quote of arguments
-    await computer.writeJsonFile('tsconfig.json', { // <<< thin wrapper for await fs.writeFile, which is relative to the workspace dir and automatically pretty JSON.stringify's the value
-      compilerOptions: {
-        module: 'NodeNext',
-        moduleResolution: 'NodeNext',
-        noEmitOnError: true,
-        pretty: false,
-        strict: true,
-        target: 'ES2022',
-        types: ['node'],
-      },
-      include: ['test.ts'],
-    } satisfies tf.TsConfigJson)
-    await computer.writeJsonFile('package.json', {
-      type: 'module',
-      scripts: { build: 'tsc' },
-      devDependencies: { '@types/node': '^25.9.1', typescript: '^5.9.3'},
-    } satisfies tf.PackageJson)
-    await computer.exec({ timeout: 120_000 })`pnpm install`
+  await computer.writeFile('test.ts', '')
 
-    await computer.writeFile('test.ts', '')
+  expect(await computer.glob('*')).toContain('test.ts')
+  expect(await computer.glob('node_modules/typescript/package.json')).toHaveLength(1)
 
-    expect(await computer.glob('*')).toContain('test.ts')
-    expect(await computer.glob('node_modules/typescript/package.json')).toHaveLength(1)
+  expect(await computer.permissions()).toMatchObject({ // <<< peekaboo permissions --json as a method
+    permissions: expect.objectContaining({ name: "Accessibility", isGranted: true })
+  })
 
-    expect(await computer.permissions()).toMatchObject({ // <<< peekaboo permissions --json as a method
-      permissions: expect.objectContaining({ name: "Accessibility", isGranted: true })
-    })
+  await using ide = await computer.open('.', { app: "Cursor", waitUntilReady: true }) // <<< peekaboo open <path> --app Cursor --wait-until-ready as a method
 
-    await using ide = await computer.open(computer.directory, { app: "Cursor", waitUntilReady: true }) // <<< peekaboo open <path> --app Cursor --wait-until-ready as a method
+  await ide.hotkey('cmd,k')
+  await ide.hotkey('cmd,w')
 
-    await ide.hotkey('cmd,k')
-    await ide.hotkey('cmd,w')
+  await computer.open('test.ts', { app: "Cursor", waitUntilReady: true })
 
-    await computer.open(testFile, { app: "Cursor", waitUntilReady: true })
+  await ide.hotkey('cmd,1')
+  await ide.hotkey('escape')
+  await ide.hotkey('escape')
 
-    await ide.hotkey('cmd,1')
-    await ide.hotkey('escape')
-    await ide.hotkey('escape')
+  await ide.click(ide.center())
+  await ide.hotkey('cmd,a', { noAutoFocus: true })
 
-    await ide.click({ coords: editorFocusCoordinate })
-    await ide.hotkey('cmd,a', { noAutoFocus: true })
+  await ide.type(typescriptProgramWithBug, { profile: "linear", delay: 10, noAutoFocus: true })
 
-    await ide.type(typescriptProgramWithBug, { profile: "linear", delay: 10, noAutoFocus: true })
+  await ide.hotkey('cmd,s', { noAutoFocus: true })
 
-    await ide.sleep(500)
-    await ide.hotkey('cmd,s', { noAutoFocus: true })
-    await ide.sleep(500)
+  expect(await computer.readFile('test.ts')).toContain('const username: number')
 
-    expect(await computer.readFile('test.ts')).toContain('const username: number')
+  await ide.hotkey('cmd,1')
+  await ide.hotkey('escape')
 
-    await ide.hotkey('cmd,1')
-    await ide.hotkey('escape')
+  const numberText = ide.ocr({ text: 'number' })
+  await numberText.waitFor()
 
-    const numberType = ide.ocr({ text: 'number' })
-    await numberType.waitFor()
+  await ide.ocr({ text: 'username:' }).hover()
+  await ide.ocr({ text: "Type 'string' is not assignable to type 'number'" }).waitFor()
 
-    await ide.ocr({ text: 'username:' }).hover()
-    await ide.ocr({ text: "Type 'string' is not assignable to type 'number'" }).waitFor()
-    await ide.sleep(1000)
+  await numberText.dblclick()
+  expect(await ide.copySelection()).toMatchObject({ new: 'number' })
 
-    await numberType.dblclick()
-    const clipboard = await ide.copySelection()
-    expect(clipboard.new).toBe('number')
+  await ide.type('string', { profile: "linear", delay: 10, noAutoFocus: true })
+  await ide.sleep(300)
+  await ide.hotkey('cmd,s')
+  await ide.sleep(300)
 
-    await ide.type('string', { profile: "linear", delay: 10, noAutoFocus: true })
-    await ide.sleep(300)
-    await ide.hotkey('cmd,s')
-    await ide.sleep(300)
+  expect(await computer.readFile('test.ts')).toContain('const username: string')
 
-    expect(await computer.readFile('test.ts')).toContain('const username: string')
+  await ide.hotkey('ctrl,`')
+  await ide.sleep(250)
+  await ide.type('pnpm build', { profile: "linear", delay: 10, noAutoFocus: true })
+  await ide.sleep(200)
+  await ide.press('return', { noAutoFocus: true })
 
-    await ide.hotkey('ctrl,`')
-    await ide.sleep(250)
-    await ide.type('pnpm build', { profile: "linear", delay: 10, noAutoFocus: true })
-    await ide.sleep(200)
-    await ide.press('return', { noAutoFocus: true })
+  await computer.waitForFile('test.js', { contains: 'Hello' })
 
-    await computer.waitForFile('test.js', { contains: 'Hello' })
-
-    await computer.open(outputFile, { app: "Cursor", waitUntilReady: true })
-  },
-  180_000,
+  await computer.open('test.js', { app: "Cursor", waitUntilReady: true })
+},
+180_000,
 )
 
 const typescriptProgramWithBug = `const nameArg = process.argv.find((arg) => arg.startsWith('--name='))
@@ -111,6 +98,14 @@ console.log(\`Hello, \${username}!\`)
 
 function shellQuote(value: string) {
   return `'${value.replace(/'/g, `'\\''`)}'`
+}
+
+function slugify(value: string) {
+  return value
+    .toLowerCase()
+    .replace(/[^a-z0-9]+/g, '-')
+    .replace(/^-+|-+$/g, '')
+    .slice(0, 80) || 'compwright-demo'
 }
 
 type ComputerExecResult = {
@@ -218,15 +213,20 @@ type OcrLocatorInfo = {
 }
 
 class PeekabooComputer implements AsyncDisposable {
-  directory = workspace
+  directory: string
   exec: ComputerExec
 
-  static async create() {
-    await fs.mkdir(workspace, { recursive: true })
-    return new PeekabooComputer()
+  static async create(testState: {currentTestName?: string}) {
+    const slug = slugify(testState.currentTestName || 'compwright-demo')
+    const parent = mkdtempSync(join(tmpdir(), `${slug}-`))
+    const directory = join(parent, slug)
+    const computer = new PeekabooComputer(directory)
+    await fs.mkdir(computer.directory, { recursive: true })
+    return computer
   }
 
-  private constructor() {
+  private constructor(directory: string) {
+    this.directory = directory
     this.exec = createExec(() =>
       existsSync(join(this.directory, 'package.json'))
         ? this.directory
@@ -245,9 +245,10 @@ class PeekabooComputer implements AsyncDisposable {
   async open(target: string, options: OpenOptions) {
     const windowTitle = basename(this.directory)
     const waitFlag = options.waitUntilReady ? ' --wait-until-ready' : ''
+    const resolvedTarget = this.resolvePath(target)
 
     await runShellCommand(
-      `peekaboo open ${shellQuote(target)} --app ${shellQuote(options.app)}${waitFlag}`,
+      `peekaboo open ${shellQuote(resolvedTarget)} --app ${shellQuote(options.app)}${waitFlag}`,
       {
         cwd: process.cwd(),
         timeout: 60_000,
@@ -256,6 +257,7 @@ class PeekabooComputer implements AsyncDisposable {
     const peekabooWindow = await waitForPeekabooWindow(options.app, windowTitle)
 
     return new PeekabooWindow({
+      clipboardSlot: `demo-helper-${basename(this.directory)}`,
       directory: this.directory,
       windowBounds: peekabooWindow.bounds,
       windowId: peekabooWindow.window_id,
@@ -279,7 +281,7 @@ class PeekabooComputer implements AsyncDisposable {
   }
 
   async readFile(path: string) {
-    return await fs.readFile(join(this.directory, path), 'utf8')
+    return await fs.readFile(this.resolvePath(path), 'utf8')
   }
 
   async waitForFile(path: string, options: WaitForFileOptions) {
@@ -309,15 +311,20 @@ class PeekabooComputer implements AsyncDisposable {
 
   async writeFile(path: string, value: string) {
     await fs.mkdir(this.directory, { recursive: true })
-    await fs.writeFile(join(this.directory, path), value)
+    await fs.writeFile(this.resolvePath(path), value)
   }
 
   async writeJsonFile(path: string, value: any) {
     await this.writeFile(path, `${JSON.stringify(value, null, 2)}\n`)
   }
+
+  private resolvePath(path: string) {
+    return isAbsolute(path) ? path : join(this.directory, path)
+  }
 }
 
 class PeekabooWindow implements AsyncDisposable {
+  private clipboardSlot: string
   private directory: string
   private exec: ComputerExec
   private ocrCaptureIndex = 0
@@ -325,10 +332,12 @@ class PeekabooWindow implements AsyncDisposable {
   private windowId: number
 
   constructor(options: {
+    clipboardSlot: string
     directory: string
     windowBounds: PeekabooBounds
     windowId: number
   }) {
+    this.clipboardSlot = options.clipboardSlot
     this.directory = options.directory
     this.windowBounds = options.windowBounds
     this.windowId = options.windowId
@@ -348,10 +357,20 @@ class PeekabooWindow implements AsyncDisposable {
     await this.sleep(100)
   }
 
+  center(): ClickTarget {
+    return {
+      coords: coordsString({
+        relativeTo: 'window',
+        x: this.windowBounds.width / 2,
+        y: this.windowBounds.height / 2,
+      }),
+    }
+  }
+
   copySelection = async (): Promise<ClipboardSnapshot> => {
     const oldClipboard = await this.readClipboard().catch(() => '')
     await runShellCommand(
-      `peekaboo clipboard save --slot ${shellQuote(clipboardSlot)} >/dev/null`,
+      `peekaboo clipboard save --slot ${shellQuote(this.clipboardSlot)} >/dev/null`,
       { cwd: process.cwd() },
     )
 
@@ -365,7 +384,7 @@ class PeekabooWindow implements AsyncDisposable {
       }
     } finally {
       await runShellCommand(
-        `peekaboo clipboard restore --slot ${shellQuote(clipboardSlot)} >/dev/null 2>&1 || true`,
+        `peekaboo clipboard restore --slot ${shellQuote(this.clipboardSlot)} >/dev/null 2>&1 || true`,
         { cwd: process.cwd() },
       )
     }
@@ -651,10 +670,6 @@ class PeekabooOcrLocator {
     this.match = this.match || this.window.findOcrMatch(this.options)
     return this.match
   }
-}
-
-async function createPeekabooComputer(_testState: unknown) {
-  return PeekabooComputer.create()
 }
 
 function createExec(cwd: () => string): ComputerExec {
