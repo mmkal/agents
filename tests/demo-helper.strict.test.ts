@@ -222,10 +222,11 @@ test('strict replay fails when a command check returns false', async () => {
   ).rejects.toThrow(/Command check failed/)
 })
 
-test('strict replay aborts and says when the mouse moves between steps', async () => {
+test('strict replay pauses and resumes when the mouse moves between steps', async () => {
   const transcript: string[] = []
   const notifications: string[] = []
   let mouse = { x: 10, y: 20 }
+  const currentWindow = { id: 123, title: 'Demo Window' }
 
   await using demo = createDemoHelper(
     {
@@ -235,10 +236,55 @@ test('strict replay aborts and says when the mouse moves between steps', async (
     {
       mode: 'strict',
       mouse: {
+        isWindowOpen: async () => true,
         notifyMoved: async () => {
-          notifications.push('mouse moved, aborting')
+          notifications.push('mouse moved, pausing')
         },
+        pauseSettleMs: 1,
         readPosition: async () => mouse,
+        readCurrentWindow: async () => currentWindow,
+      },
+      runner: async (command) => {
+        transcript.push(command.command)
+      },
+    },
+  )
+
+  await demo.run('first step', {
+    how: demo.exec('true'),
+  })
+
+  mouse = { x: 50, y: 20 }
+
+  await demo.run('second step', {
+    how: demo.exec('second command'),
+  })
+
+  expect(transcript).toEqual(['true', 'second command'])
+  expect(notifications).toEqual(['mouse moved, pausing'])
+})
+
+test('strict replay throws when the current window closes while mouse movement has paused the test', async () => {
+  const transcript: string[] = []
+  const notifications: string[] = []
+  let mouse = { x: 10, y: 20 }
+  const currentWindow = { id: 123, title: 'Demo Window' }
+
+  await using demo = createDemoHelper(
+    {
+      currentTestName: expect.getState().currentTestName,
+      testPath: fileURLToPath(import.meta.url),
+    },
+    {
+      mode: 'strict',
+      mouse: {
+        isWindowOpen: async () => false,
+        notifyMoved: async () => {
+          notifications.push('mouse moved, pausing')
+        },
+        pauseSettleMs: 1,
+        readPosition: async () => mouse,
+        readCurrentWindow: async () => currentWindow,
       },
       runner: async (command) => {
         transcript.push(command.command)
@@ -256,10 +302,10 @@ test('strict replay aborts and says when the mouse moves between steps', async (
     demo.run('second step', {
       how: demo.exec('should not run'),
     }),
-  ).rejects.toThrow(/Mouse moved before step "second step"/)
+  ).rejects.toThrow(/Current window closed/)
 
   expect(transcript).toEqual(['true'])
-  expect(notifications).toEqual(['mouse moved, aborting'])
+  expect(notifications).toEqual(['mouse moved, pausing'])
 })
 
 test('strict replay updates the expected mouse position after peekaboo interaction commands', async () => {

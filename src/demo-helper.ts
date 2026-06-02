@@ -93,13 +93,27 @@ export type DemoMousePosition = {
 }
 
 export type DemoMouseGuardOptions = {
+  isWindowOpen?: DemoWindowOpenChecker
   notifyMoved?: DemoMouseMovedNotifier
+  pauseSettleMs?: number
   pollIntervalMs?: number
+  readCurrentWindow?: DemoCurrentWindowReader
   readPosition?: DemoMousePositionReader
   tolerancePixels?: number
 }
 
 export type DemoMouseMovedNotifier = (event: DemoMouseMovedEvent) => Promise<void> | void
+
+export type DemoCurrentWindow = {
+  id?: number
+  title?: string
+}
+
+export type DemoCurrentWindowReader = () => Promise<DemoCurrentWindow | undefined>
+
+export type DemoWindowOpenChecker = (
+  window: DemoCurrentWindow,
+) => Promise<boolean> | boolean
 
 export type DemoMouseMovedEvent = {
   actual: DemoMousePosition
@@ -719,16 +733,38 @@ class DemoMouseMovedError extends Error {
   }
 }
 
+class DemoWindowClosedError extends Error {
+  constructor(window: DemoCurrentWindow | undefined, event: DemoMouseMovedEvent) {
+    super(
+      [
+        'Current window closed while demo was paused after mouse movement.',
+        window?.title ? `Window: ${window.title}.` : '',
+        window?.id ? `Window id: ${window.id}.` : '',
+        `Mouse moved ${event.location}.`,
+      ]
+        .filter(Boolean)
+        .join(' '),
+    )
+    this.name = 'DemoWindowClosedError'
+  }
+}
+
 class DemoMouseGuard {
   private expectedPosition?: DemoMousePosition
+  private isWindowOpen: DemoWindowOpenChecker
   private notifyMoved: DemoMouseMovedNotifier
+  private pauseSettleMs: number
   private pollIntervalMs: number
+  private readCurrentWindow: DemoCurrentWindowReader
   private readPosition: DemoMousePositionReader
   private tolerancePixels: number
 
   constructor(options: DemoMouseGuardOptions = {}) {
+    this.isWindowOpen = options.isWindowOpen || isCurrentWindowOpen
     this.notifyMoved = options.notifyMoved || sayMouseMoved
+    this.pauseSettleMs = options.pauseSettleMs || 1_000
     this.pollIntervalMs = options.pollIntervalMs || 100
+    this.readCurrentWindow = options.readCurrentWindow || readCurrentWindow
     this.readPosition = options.readPosition || readSystemMousePosition
     this.tolerancePixels = options.tolerancePixels || 2
   }
@@ -781,7 +817,7 @@ class DemoMouseGuard {
     abortController: AbortController
     location: string
   }) {
-    let error: DemoMouseMovedError | undefined
+    let error: Error | undefined
     let polling = false
 
     const timer = setInterval(() => {
@@ -828,13 +864,41 @@ class DemoMouseGuard {
       expected: this.expectedPosition,
       location,
     }
-    const error = new DemoMouseMovedError(event)
 
     try {
       await this.notifyMoved(event)
     } catch {}
 
-    throw error
+    await this.pauseUntilMouseSettlesOrWindowCloses(event)
+  }
+
+  private async pauseUntilMouseSettlesOrWindowCloses(
+    event: DemoMouseMovedEvent,
+  ) {
+    const currentWindow = await this.readCurrentWindow().catch(() => undefined)
+    let lastPosition = event.actual
+    let settledSince = Date.now()
+
+    while (true) {
+      if (currentWindow && !(await this.isWindowOpen(currentWindow))) {
+        throw new DemoWindowClosedError(currentWindow, event)
+      }
+
+      await sleep(this.pollIntervalMs)
+
+      const actual = await this.readPosition()
+
+      if (mousePositionsMatch(actual, lastPosition, this.tolerancePixels)) {
+        if (Date.now() - settledSince >= this.pauseSettleMs) {
+          this.expectedPosition = actual
+          return
+        }
+        continue
+      }
+
+      lastPosition = actual
+      settledSince = Date.now()
+    }
   }
 }
 
@@ -887,6 +951,10 @@ function formatMousePosition(position: DemoMousePosition) {
   return `${position.x},${position.y}`
 }
 
+async function sleep(ms: number) {
+  await new Promise((resolve) => setTimeout(resolve, ms))
+}
+
 async function readSystemMousePosition() {
   const result = await runCommandForOutput(
     createExecCommand('cliclick p', { timeoutMs: 5_000 }),
@@ -903,8 +971,43 @@ async function readSystemMousePosition() {
   }
 }
 
+async function readCurrentWindow(): Promise<DemoCurrentWindow | undefined> {
+  const result = await runCommandForOutput(
+    createExecCommand('peekaboo see --mode frontmost --json', { timeoutMs: 5_000 }),
+  )
+  const payload = JSON.parse(result.stdout)
+  const target = payload.data?.observation?.target
+  const id = Number(target?.window_id)
+
+  if (!Number.isFinite(id)) {
+    return undefined
+  }
+
+  return {
+    id,
+    title: payload.data?.window_title,
+  }
+}
+
+async function isCurrentWindowOpen(window: DemoCurrentWindow) {
+  if (!window.id) {
+    return true
+  }
+
+  try {
+    await runCommandForOutput(
+      createExecCommand(`peekaboo see --window-id ${window.id} --json`, {
+        timeoutMs: 5_000,
+      }),
+    )
+    return true
+  } catch {
+    return false
+  }
+}
+
 function sayMouseMoved() {
-  speak('mouse moved, aborting')
+  speak('mouse moved, pausing')
 }
 
 function sayStep(step: string) {

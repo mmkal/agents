@@ -18,9 +18,21 @@ test(
     await using computer = await createPeekabooComputer(expect.getState())
 
     await computer.exec`rm -rf ${workspace} && mkdir -p ${workspace}` // << automatic shell quote of arguments
+    await computer.writeJsonFile('tsconfig.json', {
+      compilerOptions: {
+        module: 'NodeNext',
+        moduleResolution: 'NodeNext',
+        noEmitOnError: true,
+        pretty: false,
+        strict: true,
+        target: 'ES2022',
+        types: ['node'],
+      },
+      include: ['test.ts'],
+    })
     await computer.writeJsonFile( // <<< thin wrapper for await fs.writeFile, which is relative to the workspace dir and automatically pretty JSON.stringify's the value
       'package.json',
-      {type: 'module', devDependencies: { '@types/node': '^25.9.1', typescript: '^5.9.3'}},
+      {type: 'module', scripts: { build: 'tsc' }, devDependencies: { '@types/node': '^25.9.1', typescript: '^5.9.3'}},
     )
     await computer.exec({ timeout: 120_000 })`pnpm install` // <<< exec(...) configures the exec method and returns another exec method with that config
 
@@ -63,6 +75,10 @@ test(
 
     const typeAnnotation = ide.ocr({ text: 'number' })
     expect(await typeAnnotation.screenCoordinates()).toMatchObject({ relativeTo: 'screen', x: expect.any(Number), y: expect.any(Number) })
+    const username = ide.ocr({ text: 'username:' })
+    await username.hover()
+    await ide.sleep(1000)
+    await ide.ocr({ text: "Type 'string' is not assignable to type 'number'" }).waitFor()
 
     await typeAnnotation.dblclick()
     const clipboard = await ide.copySelection() // does some kind of cmd-c, returns {new: <highlighted text>, old: <previous clipboard contents>}
@@ -75,7 +91,13 @@ test(
 
     expect(await computer.readFile('test.ts')).toContain('const username: string')
 
-    await computer.exec`pnpm exec tsc --pretty false --types node --module nodenext --target es2022 test.ts`
+    await ide.hotkey('ctrl,`')
+    await ide.sleep(250)
+    await ide.type('pnpm build', { profile: "linear", delay: 10, noAutoFocus: true })
+    await ide.sleep(200)
+    await ide.press('return', { noAutoFocus: true })
+
+    await computer.waitForFile('test.js', { contains: 'Hello' })
 
     await expect(
       computer.exec`node test.js --name=TypeScript`,
@@ -124,6 +146,10 @@ type HotkeyOptions = {
   noAutoFocus?: boolean
 }
 
+type PressOptions = {
+  noAutoFocus?: boolean
+}
+
 type TypeOptions = {
   delay: number
   noAutoFocus: boolean
@@ -137,6 +163,10 @@ type ClickTarget = {
 type ClipboardSnapshot = {
   new: string
   old: string
+}
+
+type WaitForFileOptions = {
+  contains: string
 }
 
 type OcrOptions = {
@@ -259,6 +289,31 @@ class PeekabooComputer implements AsyncDisposable {
     return await fs.readFile(join(this.directory, path), 'utf8')
   }
 
+  async waitForFile(path: string, options: WaitForFileOptions) {
+    const deadline = Date.now() + 5_000
+    let lastContents = ''
+
+    while (Date.now() < deadline) {
+      try {
+        lastContents = await this.readFile(path)
+
+        if (lastContents.includes(options.contains)) {
+          return lastContents
+        }
+      } catch (error) {
+        if ((error as any).code !== 'ENOENT') {
+          throw error
+        }
+      }
+
+      await sleep(100)
+    }
+
+    throw new Error(
+      `Timed out waiting for ${path} to contain ${JSON.stringify(options.contains)}. Last contents: ${JSON.stringify(lastContents)}`,
+    )
+  }
+
   async writeFile(path: string, value: string) {
     await fs.mkdir(this.directory, { recursive: true })
     await fs.writeFile(join(this.directory, path), value)
@@ -327,6 +382,15 @@ class PeekabooWindow implements AsyncDisposable {
     const targetFlags = options.noAutoFocus ? '' : this.targetFlags()
 
     await this.exec`peekaboo hotkey ${keys} ${raw(targetFlags)} ${raw(
+      options.noAutoFocus ? '--no-auto-focus' : '',
+    )}`
+    await this.sleep(100)
+  }
+
+  async press(keys: string, options: PressOptions = {}) {
+    const targetFlags = options.noAutoFocus ? '' : this.targetFlags()
+
+    await this.exec`peekaboo press ${keys} ${raw(targetFlags)} ${raw(
       options.noAutoFocus ? '--no-auto-focus' : '',
     )}`
     await this.sleep(100)
@@ -490,6 +554,18 @@ class PeekabooOcrLocator {
     await this.window.sleep(100)
   }
 
+  async hover() {
+    const coords = await this.screenCoordinates()
+
+    await runShellCommand(
+      `peekaboo move --coords ${shellQuote(coordsString(coords))} ${this.window.targetFlags()} --duration 150 --steps 5 --profile linear`,
+      {
+        cwd: process.cwd(),
+      },
+    )
+    await this.window.sleep(100)
+  }
+
   async info(): Promise<OcrLocatorInfo> {
     const match = await this.resolve()
 
@@ -558,8 +634,24 @@ class PeekabooOcrLocator {
   }
 
   async waitFor() {
-    await this.resolve()
-    return this
+    const deadline = Date.now() + 5_000
+    let lastError: unknown
+
+    while (Date.now() < deadline) {
+      try {
+        this.match = undefined
+        await this.resolve()
+        return this
+      } catch (error) {
+        lastError = error
+      }
+
+      await this.window.sleep(100)
+    }
+
+    throw new Error(
+      `Timed out waiting for OCR text ${JSON.stringify(this.options.text)}. ${String(lastError)}`,
+    )
   }
 
   private resolve() {
