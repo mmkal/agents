@@ -4,6 +4,7 @@ import {
   createDemoHelper,
   type DemoCommand,
   type DemoCommandResult,
+  type DemoMouseMovedEvent,
 } from '../src/demo-helper.ts'
 
 test('strict replay runs preconditions, how commands, and postconditions', async () => {
@@ -99,6 +100,33 @@ test('strict replay runs step cleanup on demo disposal in reverse order', async 
     'dispose: peekaboo app quit --app Notes',
     'callback: close calculator scratch window',
   ])
+})
+
+test('strict replay can announce each step when configured', async () => {
+  const announcedSteps: string[] = []
+
+  await using demo = createDemoHelper(
+    {
+      currentTestName: expect.getState().currentTestName,
+      testPath: fileURLToPath(import.meta.url),
+    },
+    {
+      announceStep: async (step) => {
+        announcedSteps.push(step)
+      },
+      mode: 'strict',
+      runner: async () => {},
+    },
+  )
+
+  await demo.run('open calculator', {
+    how: demo.exec('true'),
+  })
+  await demo.run('type arithmetic', {
+    how: demo.exec('true'),
+  })
+
+  expect(announcedSteps).toEqual(['open calculator', 'type arithmetic'])
 })
 
 test('strict replay can check command stdout in postconditions', async () => {
@@ -234,7 +262,7 @@ test('strict replay aborts and says when the mouse moves between steps', async (
   expect(notifications).toEqual(['mouse moved, aborting'])
 })
 
-test('strict replay updates the expected mouse position after peekaboo pointer commands', async () => {
+test('strict replay updates the expected mouse position after peekaboo interaction commands', async () => {
   const transcript: string[] = []
   let mouse = { x: 10, y: 20 }
 
@@ -257,6 +285,10 @@ test('strict replay updates the expected mouse position after peekaboo pointer c
         if (command.command.startsWith('peekaboo click ')) {
           mouse = { x: 100, y: 200 }
         }
+
+        if (command.command.startsWith('peekaboo type ')) {
+          mouse = { x: 110, y: 210 }
+        }
       },
     },
   )
@@ -272,4 +304,46 @@ test('strict replay updates the expected mouse position after peekaboo pointer c
     'peekaboo click --coords 100,200 --app Cursor',
     'peekaboo type hello --app Cursor',
   ])
+})
+
+test('strict replay tolerates transient mouse movement during peekaboo interaction commands', async () => {
+  const transcript: string[] = []
+  const notifications: DemoMouseMovedEvent[] = []
+  let mouse = { x: 10, y: 20 }
+
+  await using demo = createDemoHelper(
+    {
+      currentTestName: expect.getState().currentTestName,
+      testPath: fileURLToPath(import.meta.url),
+    },
+    {
+      mode: 'strict',
+      mouse: {
+        notifyMoved: async (event) => {
+          notifications.push(event)
+        },
+        pollIntervalMs: 1,
+        readPosition: async () => mouse,
+      },
+      runner: async (command) => {
+        transcript.push(command.command)
+
+        if (command.command.startsWith('peekaboo type ')) {
+          mouse = { x: 500, y: 600 }
+          await new Promise((resolve) => setTimeout(resolve, 20))
+          mouse = { x: 30, y: 40 }
+        }
+      },
+    },
+  )
+
+  await demo.run('type in Cursor', {
+    how: demo.exec('peekaboo type hello --app Cursor'),
+  })
+  await demo.run('run a non-pointer command afterwards', {
+    how: demo.exec('true'),
+  })
+
+  expect(transcript).toEqual(['peekaboo type hello --app Cursor', 'true'])
+  expect(notifications).toEqual([])
 })

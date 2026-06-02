@@ -1,4 +1,4 @@
-import { spawn } from 'node:child_process'
+import { type ChildProcess, spawn } from 'node:child_process'
 import {
   applyDemoRunSourceUpdates,
   type DemoRunSourceUpdate,
@@ -78,11 +78,14 @@ export type DemoTestState = {
 }
 
 export type DemoHelperOptions = {
+  announceStep?: DemoStepAnnouncer | false
   mode?: DemoMode
   mouse?: DemoMouseGuardOptions | false
   planner?: DemoPlanner
   runner?: DemoCommandRunner
 }
+
+export type DemoStepAnnouncer = (step: string) => Promise<void> | void
 
 export type DemoMousePosition = {
   x: number
@@ -135,6 +138,7 @@ export function createDemoHelper(
 
 export class DemoHelper implements AsyncDisposable {
   private mode: DemoMode
+  private announceStep?: DemoStepAnnouncer
   private pendingSourceUpdates: DemoRunSourceUpdate[] = []
   private planner: DemoPlanner
   private disposeFns: DemoDisposeFn[] = []
@@ -152,6 +156,7 @@ export class DemoHelper implements AsyncDisposable {
         agentPlanner: this.mode === 'update' ? createPiDemoPlanner() : undefined,
       })
     this.runner = options.runner || runShellCommand
+    this.announceStep = createStepAnnouncer(options)
     this.mouseGuard = createMouseGuard(options)
     this.testState = testState
   }
@@ -179,6 +184,7 @@ export class DemoHelper implements AsyncDisposable {
         step,
         testState: this.testState,
       })
+      await this.announceStep?.(step)
       await this.executeRecipe(step, plannedRecipe)
       this.stepsSoFar.push(step)
       this.pendingSourceUpdates.push({ occurrenceIndex, recipe: plannedRecipe, step })
@@ -186,6 +192,7 @@ export class DemoHelper implements AsyncDisposable {
     }
 
     try {
+      await this.announceStep?.(step)
       await this.executeRecipe(step, recipe)
       this.stepsSoFar.push(step)
     } catch (error) {
@@ -745,7 +752,7 @@ class DemoMouseGuard {
 
     const abortController = new AbortController()
 
-    if (commandMayMoveMouse(context.command.command)) {
+    if (commandMayLeaveMouseAtNewPosition(context.command.command)) {
       return {
         finish: async () => {
           this.expectedPosition = await this.readPosition()
@@ -843,8 +850,26 @@ function createMouseGuard(options: DemoHelperOptions) {
   return new DemoMouseGuard(options.mouse || {})
 }
 
-function commandMayMoveMouse(command: string) {
-  return /\bpeekaboo\s+(click|drag|move|swipe)\b/.test(command)
+function createStepAnnouncer(options: DemoHelperOptions) {
+  if (options.announceStep === false) {
+    return undefined
+  }
+
+  if (options.announceStep) {
+    return options.announceStep
+  }
+
+  if (options.runner) {
+    return undefined
+  }
+
+  return sayStep
+}
+
+function commandMayLeaveMouseAtNewPosition(command: string) {
+  return /\bpeekaboo\s+(app|click|drag|hotkey|move|open|press|swipe|type|window)\b/.test(
+    command,
+  )
 }
 
 function mousePositionsMatch(
@@ -878,12 +903,38 @@ async function readSystemMousePosition() {
   }
 }
 
-async function sayMouseMoved() {
-  await runCommandForOutput(
-    createExecCommand(`say ${shellQuote('mouse moved, aborting')}`, {
-      timeoutMs: 10_000,
-    }),
-  )
+function sayMouseMoved() {
+  speak('mouse moved, aborting')
+}
+
+function sayStep(step: string) {
+  speak(step)
+}
+
+let activeSayProcess: ChildProcess | undefined
+
+function speak(text: string) {
+  if (activeSayProcess) {
+    activeSayProcess.kill('SIGTERM')
+    activeSayProcess = undefined
+  }
+
+  const child = spawn('say', [text], {
+    stdio: 'ignore',
+  })
+
+  activeSayProcess = child
+  child.on('error', () => {
+    if (activeSayProcess === child) {
+      activeSayProcess = undefined
+    }
+  })
+  child.on('exit', () => {
+    if (activeSayProcess === child) {
+      activeSayProcess = undefined
+    }
+  })
+  child.unref()
 }
 
 async function runCommandCheck(

@@ -9,7 +9,11 @@ const workspaceName = basename(workspace)
 const testFile = join(workspace, 'test.ts')
 const outputFile = join(workspace, 'test.js')
 const cursorWindowTarget = `--app Cursor --window-title ${shellQuote(workspaceName)}`
+const editorFocusCoordinate = '430,110'
+const typeAnnotationCoordinate = '610,129'
+const clipboardSlot = `demo-helper-${workspaceName}`
 const waitForCursorWindow = `i=0; while [ "$i" -lt 50 ]; do peekaboo window list --app Cursor --json | rg ${shellQuote(workspaceName)} >/dev/null && exit 0; i=$((i + 1)); sleep 0.2; done; echo ${shellQuote(`Cursor window not found for ${workspaceName}`)} >&2; exit 1`
+const closeAllCursorTabs = `peekaboo hotkey "cmd,k" --app Cursor --window-title ${shellQuote(workspaceName)} && peekaboo hotkey "cmd,w" --app Cursor --window-title ${shellQuote(workspaceName)}`
 const closeCursorAgentsPane = `peekaboo see ${cursorWindowTarget} --json | node -e ${shellQuote(closeCursorAgentsPaneScript(workspaceName))}`
 const closeCursorAgentStillWorkingDialog = `peekaboo see ${cursorWindowTarget} --json | node -e ${shellQuote(exitZeroWhenLabelIsVisibleScript('Close Anyway'))} && peekaboo click ${shellQuote('Close Anyway')} ${cursorWindowTarget} || true`
 
@@ -55,6 +59,15 @@ test(
         ),
     })
 
+    await demo.run('reset Cursor to an empty editor layout', {
+      how: [
+        demo.exec(closeAllCursorTabs),
+        demo.exec('peekaboo sleep 500'),
+        demo.exec(closeAllCursorTabs),
+        demo.exec(closeCursorAgentStillWorkingDialog),
+      ],
+    })
+
     await demo.run('open test.ts in Cursor', {
       how: [
         demo.exec(
@@ -66,24 +79,11 @@ test(
       ],
     })
 
-    await demo.run('close the Cursor Agents pane if it is open', {
-      how: [
-        demo.exec(closeCursorAgentsPane),
-        demo.exec('peekaboo sleep 500'),
-        demo.exec(closeCursorAgentStillWorkingDialog),
-        demo.exec('peekaboo sleep 500'),
-        demo.exec(`peekaboo hotkey "cmd,1" ${cursorWindowTarget}`),
-      ],
-      postconditions: demo
-        .exec(`peekaboo see ${cursorWindowTarget} --json`)
-        .json()
-        .check((data: any) => !cursorAgentsPaneIsVisible(data)),
-    })
-
     await demo.run('type test.ts with a small type error in Cursor', {
       how: [
         demo.exec(`peekaboo hotkey "cmd,1" ${cursorWindowTarget}`),
-        demo.exec(`peekaboo click --coords 430,110 ${cursorWindowTarget}`),
+        demo.exec(`peekaboo hotkey "escape" ${cursorWindowTarget}`),
+        demo.exec(`peekaboo click --coords ${editorFocusCoordinate} ${cursorWindowTarget}`),
         demo.exec(`peekaboo hotkey "cmd,a" --no-auto-focus`),
         demo.exec(
           `peekaboo type ${shellQuote(typescriptProgramWithBug)} --profile linear --delay 10 --no-auto-focus`,
@@ -94,7 +94,7 @@ test(
         demo.exec('peekaboo sleep 500'),
       ],
       postconditions: demo.exec(
-        `rg ${shellQuote('const greeting: number')} test.ts`,
+        `rg ${shellQuote('const username: number')} test.ts`,
         { cwd: workspace },
       ),
     })
@@ -102,8 +102,16 @@ test(
     await demo.run('fix the type error', {
       how: [
         demo.exec(`peekaboo hotkey "cmd,1" ${cursorWindowTarget}`),
-        demo.exec(`peekaboo click --coords 430,110 ${cursorWindowTarget}`),
-        demo.exec(`peekaboo click --coords 610,148 ${cursorWindowTarget} --double`),
+        demo.exec(`peekaboo hotkey "escape" ${cursorWindowTarget}`),
+        demo.exec(
+          assertEditorCoordinateCopiesSourceCommand(
+            editorFocusCoordinate,
+            'const username: number',
+          ),
+        ),
+        demo.exec(
+          assertCoordinateSelectsTextCommand(typeAnnotationCoordinate, 'number'),
+        ),
         demo.exec(
           `peekaboo type ${shellQuote('string')} --profile linear --delay 10 --no-auto-focus`,
         ),
@@ -112,7 +120,7 @@ test(
         demo.exec('peekaboo sleep 500'),
       ],
       postconditions: demo.exec(
-        `rg ${shellQuote('const greeting: string')} test.ts`,
+        `rg ${shellQuote('const username: string')} test.ts`,
         { cwd: workspace },
       ),
     })
@@ -137,9 +145,9 @@ test(
 )
 
 const typescriptProgramWithBug = `const nameArg = process.argv.find((arg) => arg.startsWith('--name='))
-const name = nameArg ? nameArg.slice('--name='.length) : 'demo user'
-const greeting: number = 'Hello, ' + name + '!'
-console.log(greeting)
+const username: number = nameArg.split('=')[1] || 'demo user'
+
+console.log(\`Hello, \${username}!\`)
 `
 
 function shellQuote(value: string) {
@@ -173,6 +181,41 @@ function cursorAgentsPaneIsVisible(data) {
   )
 }
 `
+}
+
+function assertEditorCoordinateCopiesSourceCommand(
+  coords: string,
+  expectedSource: string,
+) {
+  return withClipboardRestore([
+    `peekaboo click --coords ${coords} ${cursorWindowTarget}`,
+    `peekaboo hotkey "cmd,a" --no-auto-focus`,
+    `peekaboo hotkey "cmd,c" --no-auto-focus`,
+    `peekaboo sleep 100`,
+    `actual=$(peekaboo clipboard get)`,
+    `printf '%s' "$actual" | rg --fixed-strings --quiet -- ${shellQuote(expectedSource)} || { printf '%s\\n' ${shellQuote(`Expected coordinate ${coords} to focus the editor and copy source containing ${expectedSource}`)} >&2; printf 'Actual clipboard: <%s>\\n' "$actual" >&2; exit 1; }`,
+  ])
+}
+
+function assertCoordinateSelectsTextCommand(coords: string, expectedText: string) {
+  return withClipboardRestore([
+    `peekaboo click --coords ${coords} ${cursorWindowTarget} --double`,
+    `peekaboo hotkey "cmd,c" --no-auto-focus`,
+    `peekaboo sleep 100`,
+    `actual=$(peekaboo clipboard get)`,
+    `if [ "$actual" != ${shellQuote(expectedText)} ]; then printf '%s\\n' ${shellQuote(`Expected coordinate ${coords} to select ${expectedText}`)} >&2; printf 'Actual clipboard: <%s>\\n' "$actual" >&2; exit 1; fi`,
+  ])
+}
+
+function withClipboardRestore(commands: string[]) {
+  const restoreClipboard = `peekaboo clipboard restore --slot ${shellQuote(clipboardSlot)} >/dev/null 2>&1 || true`
+
+  return [
+    'set -e',
+    `peekaboo clipboard save --slot ${shellQuote(clipboardSlot)} >/dev/null`,
+    `trap ${shellQuote(restoreClipboard)} EXIT`,
+    ...commands,
+  ].join('; ')
 }
 
 function exitZeroWhenLabelIsVisibleScript(label: string) {
