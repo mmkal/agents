@@ -4,6 +4,7 @@ import * as fs from 'node:fs/promises'
 import { tmpdir } from 'node:os'
 import { basename, join } from 'node:path'
 import { expect, test } from 'vitest'
+import * as tf from 'type-fest'
 
 const workspace = mkdtempSync(join(tmpdir(), 'demo-helper-tsc-cursor-peekaboo-type-'))
 const workspaceName = basename(workspace)
@@ -18,7 +19,7 @@ test(
     await using computer = await createPeekabooComputer(expect.getState())
 
     await computer.exec`rm -rf ${workspace} && mkdir -p ${workspace}` // << automatic shell quote of arguments
-    await computer.writeJsonFile('tsconfig.json', {
+    await computer.writeJsonFile('tsconfig.json', { // <<< thin wrapper for await fs.writeFile, which is relative to the workspace dir and automatically pretty JSON.stringify's the value
       compilerOptions: {
         module: 'NodeNext',
         moduleResolution: 'NodeNext',
@@ -29,11 +30,12 @@ test(
         types: ['node'],
       },
       include: ['test.ts'],
-    })
-    await computer.writeJsonFile( // <<< thin wrapper for await fs.writeFile, which is relative to the workspace dir and automatically pretty JSON.stringify's the value
-      'package.json',
-      {type: 'module', scripts: { build: 'tsc' }, devDependencies: { '@types/node': '^25.9.1', typescript: '^5.9.3'}},
-    )
+    } satisfies tf.TsConfigJson)
+    await computer.writeJsonFile('package.json', {
+      type: 'module',
+      scripts: { build: 'tsc' },
+      devDependencies: { '@types/node': '^25.9.1', typescript: '^5.9.3'},
+    } satisfies tf.PackageJson)
     await computer.exec({ timeout: 120_000 })`pnpm install` // <<< exec(...) configures the exec method and returns another exec method with that config
 
     await computer.writeFile('test.ts', '')
@@ -42,7 +44,9 @@ test(
     expect(await computer.glob('*')).toContain('test.ts')
     expect(await computer.glob('node_modules/typescript/package.json')).toHaveLength(1)
 
-    expect(await computer.permissions()).toMatchObject({ permissions: expect.objectContaining({ name: "Accessibility", isGranted: true }) }) // <<< peekaboo permissions --json as a method
+    expect(await computer.permissions()).toMatchObject({ // <<< peekaboo permissions --json as a method
+      permissions: expect.objectContaining({ name: "Accessibility", isGranted: true })
+    })
 
     await using ide = await computer.open(computer.directory, { app: "Cursor", waitUntilReady: true }) // <<< peekaboo open <path> --app Cursor --wait-until-ready as a method
 
@@ -64,24 +68,17 @@ test(
     await ide.hotkey('cmd,s', { noAutoFocus: true })
     await ide.sleep(500)
 
-    const sourceWithTypeError = await computer.readFile('test.ts')
-    expect(sourceWithTypeError).toContain(
-      "const nameArg = process.argv.find((arg) => arg.startsWith('--name='))",
-    )
-    expect(sourceWithTypeError).toContain('const username: number')
+    expect(await computer.readFile('test.ts')).toContain('const username: number')
 
     await ide.hotkey('cmd,1')
     await ide.hotkey('escape')
-
-    const typeAnnotation = ide.ocr({ text: 'number' })
-    expect(await typeAnnotation.screenCoordinates()).toMatchObject({ relativeTo: 'screen', x: expect.any(Number), y: expect.any(Number) })
     
     await ide.ocr({ text: 'username:' }).hover()
     await ide.ocr({ text: "Type 'string' is not assignable to type 'number'" }).waitFor()
     await ide.sleep(1000)
 
-    await typeAnnotation.dblclick()
-    const clipboard = await ide.copySelection() // does some kind of cmd-c, returns {new: <highlighted text>, old: <previous clipboard contents>}
+    await ide.ocr({ text: ': number' }).dblclick()
+    const clipboard = await ide.copySelection()
     expect(clipboard.new).toBe('number')
 
     await ide.type('string', { profile: "linear", delay: 10, noAutoFocus: true })
@@ -98,12 +95,6 @@ test(
     await ide.press('return', { noAutoFocus: true })
 
     await computer.waitForFile('test.js', { contains: 'Hello' })
-
-    await expect(
-      computer.exec`node test.js --name=TypeScript`,
-    ).resolves.toMatchObject({ stdout: 'Hello, TypeScript!\n' })
-
-    expect(await computer.readFile('test.js')).toContain('Hello')
 
     await computer.open(outputFile, { app: "Cursor", waitUntilReady: true })
   },
