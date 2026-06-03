@@ -959,7 +959,8 @@ class PeekabooWindow implements AsyncDisposable, PeekabooOcrParent {
   }
 
   private async visionOcrScriptPath() {
-    const scriptPath = join(this.directory, 'vision-ocr.swift')
+    const scriptPath = join(this.assetsDirectory, 'vision-ocr.swift')
+    await fs.mkdir(this.assetsDirectory, { recursive: true })
     await fs.writeFile(scriptPath, visionOcrSwiftSource)
     return scriptPath
   }
