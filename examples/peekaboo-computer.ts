@@ -92,7 +92,39 @@ type WindowBounds = {
   y: number
 }
 
-export class PeekabooComputer implements AsyncDisposable {
+type OcrMatchResult = {
+  image: {
+    height: number
+    path: string
+    width: number
+  }
+  match: any
+  recognizedText: string[]
+  screenBounds: ScreenBounds
+  windowBounds: PeekabooBounds
+}
+
+type PeekabooCommandParent = {
+  exec: ComputerExec
+  guardedAction<T>(
+    name: string,
+    options: GuardedActionOptions,
+    action: () => Promise<T>,
+  ): Promise<T>
+  sleep(ms: number): Promise<void>
+  targetFlags(): string
+}
+
+type PeekabooLocatorParent = PeekabooCommandParent & {
+  focus(): Promise<void>
+}
+
+type PeekabooOcrParent = PeekabooLocatorParent & {
+  deadAir<T>(action: () => Promise<T>): Promise<T>
+  findOcrMatch(options: OcrOptions): Promise<OcrMatchResult>
+}
+
+export class PeekabooComputer implements AsyncDisposable, PeekabooCommandParent {
   assetsDirectory: string
   directory: string
   exec: ComputerExec
@@ -136,6 +168,14 @@ export class PeekabooComputer implements AsyncDisposable {
     return await Array.fromAsync(fs.glob(pattern, { cwd: this.directory }))
   }
 
+  async guardedAction<T>(
+    _name: string,
+    _options: GuardedActionOptions,
+    action: () => Promise<T>,
+  ) {
+    return await action()
+  }
+
   async open(
     target: string,
     options: {
@@ -144,35 +184,41 @@ export class PeekabooComputer implements AsyncDisposable {
     },
   ) {
     const windowTitle = basename(this.directory)
-    const waitFlag = options.waitUntilReady ? ' --wait-until-ready' : ''
+    const waitFlag = options.waitUntilReady ? '--wait-until-ready' : ''
     const resolvedTarget = this.resolvePath(target)
+    const previousWindowIds =
+      resolvedTarget === this.directory
+        ? new Set(
+            (await listPeekabooWindows(this, options.app))
+              .filter((window) => window.window_title.includes(windowTitle))
+              .map((window) => window.window_id),
+          )
+        : new Set<number>()
 
     if (resolvedTarget === this.directory) {
-      await closePeekabooWindows(options.app, windowTitle)
+      await closePeekabooWindows(this, options.app, windowTitle)
     }
 
-    await runShellCommand(
-      `peekaboo open ${shellQuote(resolvedTarget)} --app ${shellQuote(options.app)}${waitFlag}`,
-      {
-        cwd: process.cwd(),
-        timeout: 60_000,
-      },
+    await this.exec({ timeout: 60_000 })`peekaboo open ${resolvedTarget} --app ${options.app} ${raw(waitFlag)}`
+    const peekabooWindow = await waitForPeekabooWindow(
+      this,
+      options.app,
+      windowTitle,
+      { excludeWindowIds: previousWindowIds },
     )
-    const peekabooWindow = await waitForPeekabooWindow(options.app, windowTitle)
 
     return new PeekabooWindow({
       assetsDirectory: this.assetsDirectory,
       clipboardSlot: `demo-helper-${basename(this.directory)}`,
       directory: this.directory,
+      parent: this,
       windowBounds: peekabooWindow.bounds,
       windowId: peekabooWindow.window_id,
     })
   }
 
   async permissions() {
-    const result = await runShellCommand('peekaboo permissions --json', {
-      cwd: process.cwd(),
-    })
+    const result = await this.exec`peekaboo permissions --json`
     const payload = JSON.parse(result.stdout)
     const permissions = payload.data.permissions
     const accessibility = permissions.find(
@@ -223,18 +269,26 @@ export class PeekabooComputer implements AsyncDisposable {
     await this.writeFile(path, `${JSON.stringify(value, null, 2)}\n`)
   }
 
+  async sleep(ms: number) {
+    await sleep(ms)
+  }
+
+  targetFlags() {
+    return ''
+  }
+
   private resolvePath(path: string) {
     return isAbsolute(path) ? path : join(this.directory, path)
   }
 }
 
-class PeekabooWindow implements AsyncDisposable {
+class PeekabooWindow implements AsyncDisposable, PeekabooOcrParent {
   private assetsDirectory: string
   private clipboardSlot: string
   private directory: string
-  private exec: ComputerExec
   private mouseGuard: PeekabooMouseGuard
   private ocrCaptureIndex = 0
+  private parent: PeekabooCommandParent
   private video?: PeekabooVideo
   private windowBounds: PeekabooBounds
   private windowId: number
@@ -243,26 +297,31 @@ class PeekabooWindow implements AsyncDisposable {
     assetsDirectory: string
     clipboardSlot: string
     directory: string
+    parent: PeekabooCommandParent
     windowBounds: PeekabooBounds
     windowId: number
   }) {
     this.assetsDirectory = options.assetsDirectory
     this.clipboardSlot = options.clipboardSlot
     this.directory = options.directory
+    this.parent = options.parent
     this.windowBounds = options.windowBounds
     this.windowId = options.windowId
-    this.exec = createExec(() => process.cwd())
     this.mouseGuard = new PeekabooMouseGuard({
+      exec: this.exec,
       windowId: this.windowId,
     })
   }
 
+  get exec(): ComputerExec {
+    return this.parent.exec
+  }
+
   async [Symbol.asyncDispose]() {
     // Never fall back to title matching here; cleanup must not close a user's real Cursor window.
-    await runShellCommand(`peekaboo window close --window-id ${this.windowId}`, {
-      cwd: process.cwd(),
-      timeout: 15_000,
-    }).catch(() => {})
+    await this.exec({ timeout: 15_000 })`peekaboo window close --window-id ${this.windowId}`.catch(
+      () => {},
+    )
   }
 
   async click(target: ClickTarget) {
@@ -289,10 +348,7 @@ class PeekabooWindow implements AsyncDisposable {
 
   copySelection = async (): Promise<{ new: string; old: string }> => {
     const oldClipboard = await this.readClipboard().catch(() => '')
-    await runShellCommand(
-      `peekaboo clipboard save --slot ${shellQuote(this.clipboardSlot)} >/dev/null`,
-      { cwd: process.cwd() },
-    )
+    await this.exec`peekaboo clipboard save --slot ${this.clipboardSlot}`
 
     try {
       await this.hotkey('cmd,c', { noAutoFocus: true })
@@ -303,9 +359,8 @@ class PeekabooWindow implements AsyncDisposable {
         old: oldClipboard,
       }
     } finally {
-      await runShellCommand(
-        `peekaboo clipboard restore --slot ${shellQuote(this.clipboardSlot)} >/dev/null 2>&1 || true`,
-        { cwd: process.cwd() },
+      await this.exec`peekaboo clipboard restore --slot ${this.clipboardSlot}`.catch(
+        () => {},
       )
     }
   }
@@ -341,27 +396,22 @@ class PeekabooWindow implements AsyncDisposable {
 
   locator(target: ClickTarget) {
     return new PeekabooLocator({
+      parent: this,
       target,
-      window: this,
     })
   }
 
   ocr(options: OcrOptions) {
     return new PeekabooOcrLocator({
       options,
-      window: this,
+      parent: this,
     })
   }
 
-  async findOcrMatch(options: OcrOptions) {
+  async findOcrMatch(options: OcrOptions): Promise<OcrMatchResult> {
     const imagePath = await this.captureWindowImage()
     const scriptPath = await this.visionOcrScriptPath()
-    const result = await runShellCommand(
-      `swift ${shellQuote(scriptPath)} ${shellQuote(imagePath)} ${shellQuote(options.text)}`,
-      {
-        cwd: process.cwd(),
-      },
-    )
+    const result = await this.exec`swift ${scriptPath} ${imagePath} ${options.text}`
     const payload = JSON.parse(result.stdout)
     const matches = Array.isArray(payload.matches) ? payload.matches : []
 
@@ -427,6 +477,7 @@ class PeekabooWindow implements AsyncDisposable {
     )
     const video = new PeekabooVideo({
       assetsDirectory: this.assetsDirectory,
+      parent: this,
       path: videoPath,
       windowId: this.windowId,
     })
@@ -485,20 +536,13 @@ class PeekabooWindow implements AsyncDisposable {
       `ocr-${this.ocrCaptureIndex}-${Date.now()}.png`,
     )
 
-    await runShellCommand(
-      `peekaboo image ${this.targetFlags()} --path ${shellQuote(imagePath)} --format png --json`,
-      {
-        cwd: process.cwd(),
-      },
-    )
+    await this.exec`peekaboo image ${raw(this.targetFlags())} --path ${imagePath} --format png --json`
 
     return imagePath
   }
 
   private async readClipboard() {
-    const result = await runShellCommand('peekaboo clipboard get', {
-      cwd: process.cwd(),
-    })
+    const result = await this.exec`peekaboo clipboard get`
     return result.stdout.replace(/\n+$/, '')
   }
 
@@ -518,6 +562,7 @@ class PeekabooVideo implements AsyncDisposable {
   private finish?: Promise<void>
   private helperPath: string
   private metaPath: string
+  private parent: PeekabooCommandParent
   private ready?: Promise<void>
   private rawPath: string
   private saved?: Promise<string>
@@ -531,6 +576,7 @@ class PeekabooVideo implements AsyncDisposable {
 
   constructor(options: {
     assetsDirectory: string
+    parent: PeekabooCommandParent
     path: string
     windowId: number
   }) {
@@ -539,6 +585,7 @@ class PeekabooVideo implements AsyncDisposable {
     this.metaPath = join(options.path, 'meta.json')
     this.path = options.path
     this.rawPath = join(options.path, 'raw.mp4')
+    this.parent = options.parent
     this.sourcePath = join(
       options.assetsDirectory,
       'screen-capture-recorder.swift',
@@ -625,13 +672,7 @@ class PeekabooVideo implements AsyncDisposable {
 
   private async compileHelper() {
     await fs.writeFile(this.sourcePath, screenCaptureRecorderSwiftSource)
-    await runShellCommand(
-      `xcrun swiftc -parse-as-library ${shellQuote(this.sourcePath)} -o ${shellQuote(this.helperPath)}`,
-      {
-        cwd: process.cwd(),
-        timeout: 60_000,
-      },
-    )
+    await this.parent.exec({ timeout: 60_000 })`xcrun swiftc -parse-as-library ${this.sourcePath} -o ${this.helperPath}`
   }
 
   private startRecorder() {
@@ -732,25 +773,7 @@ class PeekabooVideo implements AsyncDisposable {
       )
       .join('+')})`
 
-    await runShellCommand(
-      [
-        'ffmpeg',
-        '-y',
-        '-hide_banner',
-        '-loglevel error',
-        '-i',
-        shellQuote(this.rawPath),
-        '-vf',
-        shellQuote(`select='${selectExpression}',setpts=N/(60*TB)`),
-        '-an',
-        '-r 60',
-        shellQuote(this.tightenedPath),
-      ].join(' '),
-      {
-        cwd: process.cwd(),
-        timeout: 30_000,
-      },
-    )
+    await this.parent.exec({ timeout: 30_000 })`ffmpeg -y -hide_banner -loglevel error -i ${this.rawPath} -vf ${`select='${selectExpression}',setpts=N/(60*TB)`} -an -r 60 ${this.tightenedPath}`
   }
 }
 
@@ -916,87 +939,73 @@ struct Recorder {
 `
 
 class PeekabooLocator {
+  private parent: PeekabooLocatorParent
   private target: ClickTarget
-  private window: PeekabooWindow
 
-  constructor(options: { target: ClickTarget; window: PeekabooWindow }) {
+  constructor(options: { parent: PeekabooLocatorParent; target: ClickTarget }) {
+    this.parent = options.parent
     this.target = options.target
-    this.window = options.window
   }
 
   async dblclick() {
-    await this.window.guardedAction(
+    await this.parent.guardedAction(
       'dblclick',
       { updatesMousePosition: true },
       async () => {
-        await this.window.focus()
-        await runShellCommand(
-          `peekaboo click --coords ${shellQuote(this.target.coords)} ${this.window.targetFlags()} --double --no-auto-focus`,
-          {
-            cwd: process.cwd(),
-          },
-        )
-        await this.window.sleep(100)
+        await this.parent.focus()
+        await this.parent.exec`peekaboo click --coords ${this.target.coords} ${raw(this.parent.targetFlags())} --double --no-auto-focus`
+        await this.parent.sleep(100)
       },
     )
   }
 }
 
 class PeekabooOcrLocator {
-  private match?: Promise<Awaited<ReturnType<PeekabooWindow['findOcrMatch']>>>
+  private match?: Promise<OcrMatchResult>
   private options: OcrOptions
-  private window: PeekabooWindow
+  private parent: PeekabooOcrParent
 
-  constructor(options: { options: OcrOptions; window: PeekabooWindow }) {
+  constructor(options: { options: OcrOptions; parent: PeekabooOcrParent }) {
     this.options = options.options
-    this.window = options.window
+    this.parent = options.parent
   }
 
   async click() {
-    await this.window.guardedAction(
+    await this.parent.guardedAction(
       'ocr.click',
       { updatesMousePosition: true },
       async () => {
         const coords = await this.screenCoordinates()
-        await this.window.focus()
-        await runShellCommand(
-          `peekaboo click --coords ${shellQuote(coordsString(coords))} --global-coords --no-auto-focus`,
-          { cwd: process.cwd() },
-        )
-        await this.window.sleep(100)
+        await this.parent.focus()
+        await this.parent.exec`peekaboo click --coords ${coordsString(coords)} --global-coords --no-auto-focus`
+        await this.parent.sleep(100)
       },
     )
   }
 
   async dblclick() {
-    await this.window.guardedAction(
+    await this.parent.guardedAction(
       'ocr.dblclick',
       { updatesMousePosition: true },
       async () => {
         const coords = await this.screenCoordinates()
 
-        await this.window.focus()
-        await runShellCommand(
-          `peekaboo click --coords ${shellQuote(coordsString(coords))} --global-coords --double --no-auto-focus`,
-          { cwd: process.cwd() },
-        )
-        await this.window.sleep(100)
+        await this.parent.focus()
+        await this.parent.exec`peekaboo click --coords ${coordsString(coords)} --global-coords --double --no-auto-focus`
+        await this.parent.sleep(100)
       },
     )
   }
 
   async hover() {
-    await this.window.guardedAction(
+    await this.parent.guardedAction(
       'ocr.hover',
       { updatesMousePosition: true },
       async () => {
         const coords = await this.screenCoordinates()
 
-        await runShellCommand(
-          `peekaboo move --coords ${shellQuote(coordsString(coords))} ${this.window.targetFlags()} --duration 150 --steps 5 --profile linear`,
-          { cwd: process.cwd() },
-        )
-        await this.window.sleep(100)
+        await this.parent.exec`peekaboo move --coords ${coordsString(coords)} ${raw(this.parent.targetFlags())} --duration 150 --steps 5 --profile linear`
+        await this.parent.sleep(100)
       },
     )
   }
@@ -1061,7 +1070,7 @@ class PeekabooOcrLocator {
   }
 
   async select() {
-    await this.window.guardedAction(
+    await this.parent.guardedAction(
       'ocr.select',
       { updatesMousePosition: true },
       async () => {
@@ -1077,24 +1086,19 @@ class PeekabooOcrLocator {
           y: bounds.y + bounds.height,
         })
 
-        await this.window.focus()
-        await runShellCommand(
-          `peekaboo drag --from-coords ${shellQuote(from)} --to-coords ${shellQuote(to)} --duration 100 --steps 5 --no-auto-focus`,
-          {
-            cwd: process.cwd(),
-          },
-        )
-        await this.window.sleep(100)
+        await this.parent.focus()
+        await this.parent.exec`peekaboo drag --from-coords ${from} --to-coords ${to} --duration 100 --steps 5 --no-auto-focus`
+        await this.parent.sleep(100)
       },
     )
   }
 
   async waitFor() {
-    return await this.window.guardedAction(
+    return await this.parent.guardedAction(
       'ocr.waitFor',
       { updatesMousePosition: false },
       async () => {
-        return await this.window.deadAir(async () => {
+        return await this.parent.deadAir(async () => {
           const deadline = Date.now() + 5_000
           let lastError: unknown
 
@@ -1107,7 +1111,7 @@ class PeekabooOcrLocator {
               lastError = error
             }
 
-            await this.window.sleep(100)
+            await this.parent.sleep(100)
           }
 
           throw new Error(
@@ -1120,7 +1124,7 @@ class PeekabooOcrLocator {
 
   private resolve() {
     this.match =
-      this.match || this.window.deadAir(() => this.window.findOcrMatch(this.options))
+      this.match || this.parent.deadAir(() => this.parent.findOcrMatch(this.options))
     return this.match
   }
 }
@@ -1140,13 +1144,15 @@ class PeekabooWindowClosedAfterMouseMoveError extends Error {
 }
 
 class PeekabooMouseGuard {
+  private exec: ComputerExec
   private expectedPosition?: MousePosition
   private pauseSettleMs = 1_000
   private pollIntervalMs = 100
   private tolerancePixels = 2
   private windowId: number
 
-  constructor(options: { windowId: number }) {
+  constructor(options: { exec: ComputerExec; windowId: number }) {
+    this.exec = options.exec
     this.windowId = options.windowId
   }
 
@@ -1159,11 +1165,11 @@ class PeekabooMouseGuard {
   }
 
   async acceptCurrentPosition() {
-    this.expectedPosition = await readSystemMousePosition()
+    this.expectedPosition = await readSystemMousePosition(this.exec)
   }
 
   private async assertMouseStill(location: string) {
-    const actual = await readSystemMousePosition()
+    const actual = await readSystemMousePosition(this.exec)
 
     if (!this.expectedPosition) {
       this.expectedPosition = actual
@@ -1189,13 +1195,13 @@ class PeekabooMouseGuard {
     let settledSince = Date.now()
 
     while (true) {
-      if (!(await peekabooWindowIsOpen(this.windowId))) {
+      if (!(await peekabooWindowIsOpen(this.exec, this.windowId))) {
         throw new PeekabooWindowClosedAfterMouseMoveError(this.windowId, event)
       }
 
       await sleep(this.pollIntervalMs)
 
-      const actual = await readSystemMousePosition()
+      const actual = await readSystemMousePosition(this.exec)
 
       if (mousePositionsMatch(actual, lastPosition, this.tolerancePixels)) {
         if (Date.now() - settledSince >= this.pauseSettleMs) {
@@ -1294,11 +1300,18 @@ type PeekabooWindowInfo = {
 }
 
 async function waitForPeekabooWindow(
+  parent: PeekabooCommandParent,
   app: string,
   windowTitle: string,
+  options: { excludeWindowIds: Set<number> },
 ): Promise<PeekabooWindowInfo> {
   for (let attempt = 0; attempt < 50; attempt += 1) {
-    const peekabooWindow = await findPeekabooWindow(app, windowTitle)
+    const peekabooWindow = await findPeekabooWindow(
+      parent,
+      app,
+      windowTitle,
+      options,
+    )
 
     if (peekabooWindow) {
       return peekabooWindow
@@ -1311,14 +1324,21 @@ async function waitForPeekabooWindow(
 }
 
 async function findPeekabooWindow(
+  parent: PeekabooCommandParent,
   app: string,
   windowTitle: string,
+  options: { excludeWindowIds: Set<number> },
 ): Promise<PeekabooWindowInfo | undefined> {
-  const windows = await listPeekabooWindows(app)
+  const windows = await listPeekabooWindows(parent, app)
 
   return windows
     .filter((window: PeekabooWindowInfo) =>
       window.window_title.includes(windowTitle),
+    )
+    .filter((window: PeekabooWindowInfo) =>
+      options.excludeWindowIds.size === 0
+        ? true
+        : !options.excludeWindowIds.has(window.window_id),
     )
     .sort(
       (left: PeekabooWindowInfo, right: PeekabooWindowInfo) =>
@@ -1326,8 +1346,12 @@ async function findPeekabooWindow(
     )[0]
 }
 
-async function closePeekabooWindows(app: string, windowTitle: string) {
-  const windows = await listPeekabooWindows(app)
+async function closePeekabooWindows(
+  parent: PeekabooCommandParent,
+  app: string,
+  windowTitle: string,
+) {
+  const windows = await listPeekabooWindows(parent, app)
   let closedAny = false
 
   for (const window of windows) {
@@ -1336,13 +1360,9 @@ async function closePeekabooWindows(app: string, windowTitle: string) {
     }
 
     closedAny = true
-    await runShellCommand(
-      `peekaboo window close --window-id ${window.window_id}`,
-      {
-        cwd: process.cwd(),
-        timeout: 15_000,
-      },
-    ).catch(() => {})
+    await parent.exec({ timeout: 15_000 })`peekaboo window close --window-id ${window.window_id}`.catch(
+      () => {},
+    )
   }
 
   if (closedAny) {
@@ -1350,14 +1370,11 @@ async function closePeekabooWindows(app: string, windowTitle: string) {
   }
 }
 
-async function listPeekabooWindows(app: string): Promise<PeekabooWindowInfo[]> {
-  const result = await runShellCommand(
-    `peekaboo window list --app ${shellQuote(app)} --json`,
-    {
-      cwd: process.cwd(),
-      timeout: 5_000,
-    },
-  )
+async function listPeekabooWindows(
+  parent: PeekabooCommandParent,
+  app: string,
+): Promise<PeekabooWindowInfo[]> {
+  const result = await parent.exec({ timeout: 5_000 })`peekaboo window list --app ${app} --json`
   const payload = JSON.parse(result.stdout)
   return Array.isArray(payload.data && payload.data.windows)
     ? payload.data.windows
@@ -1368,10 +1385,8 @@ async function sleep(ms: number) {
   await new Promise((resolve) => setTimeout(resolve, ms))
 }
 
-async function readSystemMousePosition() {
-  const result = await runShellCommand('cliclick p', {
-    cwd: process.cwd(),
-  })
+async function readSystemMousePosition(exec: ComputerExec) {
+  const result = await exec`cliclick p`
   const match = result.stdout.trim().match(/^(-?\d+),(-?\d+)$/)
 
   if (!match) {
@@ -1384,11 +1399,9 @@ async function readSystemMousePosition() {
   }
 }
 
-async function peekabooWindowIsOpen(windowId: number) {
+async function peekabooWindowIsOpen(exec: ComputerExec, windowId: number) {
   try {
-    const result = await runShellCommand('peekaboo window list --json', {
-      cwd: process.cwd(),
-    })
+    const result = await exec`peekaboo window list --json`
     const payload = JSON.parse(result.stdout)
     const windows = Array.isArray(payload.data && payload.data.windows)
       ? payload.data.windows
