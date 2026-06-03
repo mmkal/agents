@@ -268,7 +268,8 @@ class PeekabooWindow implements AsyncDisposable {
       'click',
       { updatesMousePosition: true },
       async () => {
-        await this.exec`peekaboo click --coords ${target.coords} ${raw(this.targetFlags())}`
+        await this.focus()
+        await this.exec`peekaboo click --coords ${target.coords} ${raw(this.targetFlags())} --no-auto-focus`
         await this.sleep(100)
       },
     )
@@ -400,6 +401,10 @@ class PeekabooWindow implements AsyncDisposable {
     }
   }
 
+  async focus() {
+    await this.exec`peekaboo window focus ${raw(this.targetFlags())}`
+  }
+
   async sleep(ms: number) {
     await new Promise((resolve) => setTimeout(resolve, ms))
   }
@@ -410,14 +415,10 @@ class PeekabooWindow implements AsyncDisposable {
       this.assetsDirectory,
       `video-${Date.now()}-${this.windowId}.mp4`,
     )
-    const framesDirectory = join(
-      this.assetsDirectory,
-      `video-frames-${Date.now()}-${this.windowId}`,
-    )
     const video = new PeekabooVideo({
-      framesDirectory,
+      assetsDirectory: this.assetsDirectory,
       path: videoPath,
-      targetFlags: this.targetFlags(),
+      windowId: this.windowId,
     })
     await video.start()
     return video
@@ -498,34 +499,38 @@ class PeekabooWindow implements AsyncDisposable {
 
 class PeekabooVideo implements AsyncDisposable {
   path: string
-  private captureInterval?: ReturnType<typeof setInterval>
-  private captureChain = Promise.resolve()
-  private frameCount = 0
-  private frameIntervalMs = 250
-  private frameRate = 4
-  private framesDirectory: string
+  private assetsDirectory: string
+  private child?: ReturnType<typeof spawn>
+  private finish?: Promise<void>
+  private helperPath: string
+  private ready?: Promise<void>
   private saved?: Promise<string>
+  private sourcePath: string
+  private stderr = ''
+  private stdout = ''
   private stopped = false
-  private targetFlags: string
+  private windowId: number
 
   constructor(options: {
-    framesDirectory: string
+    assetsDirectory: string
     path: string
-    targetFlags: string
+    windowId: number
   }) {
-    this.framesDirectory = options.framesDirectory
+    this.assetsDirectory = options.assetsDirectory
+    this.helperPath = join(options.assetsDirectory, 'screen-capture-recorder')
     this.path = options.path
-    this.targetFlags = options.targetFlags
+    this.sourcePath = join(
+      options.assetsDirectory,
+      'screen-capture-recorder.swift',
+    )
+    this.windowId = options.windowId
   }
 
   async start() {
-    await fs.mkdir(this.framesDirectory, { recursive: true })
-    await this.captureFrame({ required: true })
-    this.captureInterval = setInterval(() => {
-      this.captureChain = this.captureChain.then(() =>
-        this.captureFrame({ required: false }),
-      )
-    }, this.frameIntervalMs)
+    await fs.mkdir(this.assetsDirectory, { recursive: true })
+    await this.compileHelper()
+    this.startRecorder()
+    await this.ready
   }
 
   async [Symbol.asyncDispose]() {
@@ -538,41 +543,23 @@ class PeekabooVideo implements AsyncDisposable {
   }
 
   private async stopAndFinalize() {
-    this.stopped = true
+    const child = this.child
+    const finish = this.finish
 
-    if (this.captureInterval) {
-      clearInterval(this.captureInterval)
-      this.captureInterval = undefined
+    if (!child || !finish) {
+      throw new Error(`Video recorder was not started: ${this.path}`)
     }
 
-    await this.captureChain
+    if (!this.stopped && child.exitCode === null && !child.killed) {
+      if (!child.stdin) {
+        throw new Error(`Video recorder stdin was not available: ${this.path}`)
+      }
 
-    if (this.frameCount === 0) {
-      await this.captureFrame({ required: true })
+      this.stopped = true
+      child.stdin.end()
     }
 
-    await runShellCommand(
-      [
-        'ffmpeg',
-        '-y',
-        '-hide_banner',
-        '-loglevel error',
-        '-framerate',
-        String(this.frameRate),
-        '-pattern_type glob',
-        '-i',
-        shellQuote(join(this.framesDirectory, 'frame-*.png')),
-        '-vf',
-        shellQuote('scale=trunc(iw/2)*2:trunc(ih/2)*2'),
-        '-c:v libx264',
-        '-pix_fmt yuv420p',
-        shellQuote(this.path),
-      ].join(' '),
-      {
-        cwd: process.cwd(),
-        timeout: 30_000,
-      },
-    )
+    await finish
 
     const stat = await fs.stat(this.path).catch(() => undefined)
 
@@ -580,7 +567,9 @@ class PeekabooVideo implements AsyncDisposable {
       throw new Error(
         [
           `Video was not saved: ${this.path}`,
-          `Frames directory: ${this.framesDirectory}`,
+          `Recorder: ${this.helperPath}`,
+          this.stdout.trim() ? `stdout:\n${this.stdout.trim()}` : '',
+          this.stderr.trim() ? `stderr:\n${this.stderr.trim()}` : '',
         ]
           .filter(Boolean)
           .join('\n\n'),
@@ -590,31 +579,253 @@ class PeekabooVideo implements AsyncDisposable {
     return this.path
   }
 
-  private async captureFrame(options: { required: boolean }) {
-    if (this.stopped && !options.required) {
+  private async compileHelper() {
+    await fs.writeFile(this.sourcePath, screenCaptureRecorderSwiftSource)
+    await runShellCommand(
+      `xcrun swiftc -parse-as-library ${shellQuote(this.sourcePath)} -o ${shellQuote(this.helperPath)}`,
+      {
+        cwd: process.cwd(),
+        timeout: 60_000,
+      },
+    )
+  }
+
+  private startRecorder() {
+    const child = spawn(
+      this.helperPath,
+      [String(this.windowId), this.path],
+      {
+        cwd: process.cwd(),
+        env: commandEnvironment(),
+        stdio: ['pipe', 'pipe', 'pipe'],
+      },
+    )
+    let ready = false
+
+    this.child = child
+    this.ready = new Promise<void>((resolve, reject) => {
+      child.stdout.on('data', (chunk) => {
+        this.stdout += String(chunk)
+
+        if (!ready && this.stdout.includes('ready\n')) {
+          ready = true
+          resolve()
+        }
+      })
+      child.stderr.on('data', (chunk) => {
+        this.stderr += String(chunk)
+      })
+      child.on('error', (error) => {
+        if (!ready) {
+          ready = true
+          reject(error)
+        }
+      })
+      child.on('close', (code, signal) => {
+        if (!ready) {
+          ready = true
+          reject(
+            new Error(
+              [
+                `Video recorder exited before it was ready: ${this.helperPath}`,
+                `exit code: ${code}`,
+                signal ? `signal: ${signal}` : '',
+                this.stdout.trim() ? `stdout:\n${this.stdout.trim()}` : '',
+                this.stderr.trim() ? `stderr:\n${this.stderr.trim()}` : '',
+              ]
+                .filter(Boolean)
+                .join('\n\n'),
+            ),
+          )
+        }
+      })
+    })
+    this.finish = new Promise<void>((resolve, reject) => {
+      child.on('error', reject)
+      child.on('close', (code, signal) => {
+        if (code === 0) {
+          resolve()
+          return
+        }
+
+        reject(
+          new Error(
+            [
+              `Video recorder failed: ${this.helperPath}`,
+              `exit code: ${code}`,
+              signal ? `signal: ${signal}` : '',
+              this.stdout.trim() ? `stdout:\n${this.stdout.trim()}` : '',
+              this.stderr.trim() ? `stderr:\n${this.stderr.trim()}` : '',
+            ]
+              .filter(Boolean)
+              .join('\n\n'),
+          ),
+        )
+      })
+    })
+  }
+}
+
+const screenCaptureRecorderSwiftSource = `
+import AppKit
+import AVFoundation
+import CoreMedia
+import Foundation
+import ScreenCaptureKit
+
+final class VideoWriter: NSObject, SCStreamOutput {
+  private let input: AVAssetWriterInput
+  private let queue = DispatchQueue(label: "peekaboo-video-writer")
+  private var sessionStarted = false
+  private let writer: AVAssetWriter
+
+  init(path: String, width: Int, height: Int) throws {
+    let url = URL(fileURLWithPath: path)
+    try? FileManager.default.removeItem(at: url)
+    writer = try AVAssetWriter(outputURL: url, fileType: .mp4)
+    input = AVAssetWriterInput(mediaType: .video, outputSettings: [
+      AVVideoCodecKey: AVVideoCodecType.h264,
+      AVVideoWidthKey: width,
+      AVVideoHeightKey: height,
+      AVVideoCompressionPropertiesKey: [
+        AVVideoAverageBitRateKey: max(width * height * 6, 1_000_000),
+      ],
+    ])
+    input.expectsMediaDataInRealTime = true
+
+    guard writer.canAdd(input) else {
+      throw NSError(
+        domain: "PeekabooVideo",
+        code: 1,
+        userInfo: [NSLocalizedDescriptionKey: "Could not add video writer input"]
+      )
+    }
+    writer.add(input)
+  }
+
+  func stream(
+    _ stream: SCStream,
+    didOutputSampleBuffer sampleBuffer: CMSampleBuffer,
+    of outputType: SCStreamOutputType
+  ) {
+    guard outputType == .screen else { return }
+    guard CMSampleBufferDataIsReady(sampleBuffer) else { return }
+
+    if let attachments = CMSampleBufferGetSampleAttachmentsArray(
+      sampleBuffer,
+      createIfNecessary: false
+    ) as? [[SCStreamFrameInfo: Any]],
+      let rawStatus = attachments.first?[.status] as? Int,
+      let status = SCFrameStatus(rawValue: rawStatus),
+      status != .complete {
       return
     }
 
-    const framePath = join(
-      this.framesDirectory,
-      `frame-${String(this.frameCount + 1).padStart(6, '0')}.png`,
-    )
+    queue.async {
+      if !self.sessionStarted {
+        guard self.writer.startWriting() else { return }
+        self.writer.startSession(
+          atSourceTime: CMSampleBufferGetPresentationTimeStamp(sampleBuffer)
+        )
+        self.sessionStarted = true
+      }
 
-    try {
-      await runShellCommand(
-        `peekaboo image ${this.targetFlags} --path ${shellQuote(framePath)} --format png --json`,
-        {
-          cwd: process.cwd(),
-        },
-      )
-      this.frameCount += 1
-    } catch (error) {
-      if (options.required) {
-        throw error
+      if self.input.isReadyForMoreMediaData {
+        self.input.append(sampleBuffer)
+      }
+    }
+  }
+
+  func finish() async throws {
+    try await withCheckedThrowingContinuation {
+      (continuation: CheckedContinuation<Void, Error>) in
+      queue.async {
+        if !self.sessionStarted {
+          continuation.resume(
+            throwing: NSError(
+              domain: "PeekabooVideo",
+              code: 2,
+              userInfo: [NSLocalizedDescriptionKey: "No video frames were recorded"]
+            )
+          )
+          return
+        }
+
+        self.input.markAsFinished()
+        self.writer.finishWriting {
+          if self.writer.status == .failed {
+            continuation.resume(
+              throwing: self.writer.error ?? NSError(domain: "PeekabooVideo", code: 3)
+            )
+            return
+          }
+
+          continuation.resume()
+        }
       }
     }
   }
 }
+
+@main
+struct Recorder {
+  static func main() async throws {
+    _ = NSApplication.shared
+
+    guard CommandLine.arguments.count >= 3 else {
+      fputs("usage: recorder <window-id> <output-path>\\n", stderr)
+      exit(2)
+    }
+
+    guard let targetWindowId = UInt32(CommandLine.arguments[1]) else {
+      fputs("invalid window id\\n", stderr)
+      exit(2)
+    }
+
+    let outputPath = CommandLine.arguments[2]
+    let content = try await SCShareableContent.excludingDesktopWindows(
+      false,
+      onScreenWindowsOnly: true
+    )
+    guard let window = content.windows.first(where: { $0.windowID == targetWindowId }) else {
+      fputs("window not found: \\(targetWindowId)\\n", stderr)
+      exit(2)
+    }
+
+    let width = max(Int(window.frame.width.rounded()), 2)
+    let height = max(Int(window.frame.height.rounded()), 2)
+    let evenWidth = width - (width % 2)
+    let evenHeight = height - (height % 2)
+
+    let config = SCStreamConfiguration()
+    config.width = evenWidth
+    config.height = evenHeight
+    config.minimumFrameInterval = CMTime(value: 1, timescale: 30)
+    config.queueDepth = 8
+    config.showsCursor = true
+    config.pixelFormat = kCVPixelFormatType_32BGRA
+
+    let filter = SCContentFilter(desktopIndependentWindow: window)
+    let writer = try VideoWriter(path: outputPath, width: evenWidth, height: evenHeight)
+    let stream = SCStream(filter: filter, configuration: config, delegate: nil)
+    try stream.addStreamOutput(
+      writer,
+      type: .screen,
+      sampleHandlerQueue: DispatchQueue(label: "peekaboo-screen-capture")
+    )
+
+    let stopTask = Task.detached {
+      _ = FileHandle.standardInput.readDataToEndOfFile()
+    }
+
+    try await stream.startCapture()
+    FileHandle.standardOutput.write("ready\\n".data(using: .utf8)!)
+    _ = await stopTask.result
+    try await stream.stopCapture()
+    try await writer.finish()
+  }
+}
+`
 
 class PeekabooLocator {
   private target: ClickTarget
@@ -630,8 +841,9 @@ class PeekabooLocator {
       'dblclick',
       { updatesMousePosition: true },
       async () => {
+        await this.window.focus()
         await runShellCommand(
-          `peekaboo click --coords ${shellQuote(this.target.coords)} ${this.window.targetFlags()} --double`,
+          `peekaboo click --coords ${shellQuote(this.target.coords)} ${this.window.targetFlags()} --double --no-auto-focus`,
           {
             cwd: process.cwd(),
           },
@@ -657,9 +869,10 @@ class PeekabooOcrLocator {
       'ocr.click',
       { updatesMousePosition: true },
       async () => {
-        const coords = await this.windowCoordinates()
+        const coords = await this.screenCoordinates()
+        await this.window.focus()
         await runShellCommand(
-          `peekaboo click --coords ${shellQuote(coordsString(coords))} ${this.window.targetFlags()}`,
+          `peekaboo click --coords ${shellQuote(coordsString(coords))} --global-coords --no-auto-focus`,
           { cwd: process.cwd() },
         )
         await this.window.sleep(100)
@@ -672,10 +885,11 @@ class PeekabooOcrLocator {
       'ocr.dblclick',
       { updatesMousePosition: true },
       async () => {
-        const coords = await this.windowCoordinates()
+        const coords = await this.screenCoordinates()
 
+        await this.window.focus()
         await runShellCommand(
-          `peekaboo click --coords ${shellQuote(coordsString(coords))} ${this.window.targetFlags()} --double`,
+          `peekaboo click --coords ${shellQuote(coordsString(coords))} --global-coords --double --no-auto-focus`,
           { cwd: process.cwd() },
         )
         await this.window.sleep(100)
@@ -763,20 +977,21 @@ class PeekabooOcrLocator {
       'ocr.select',
       { updatesMousePosition: true },
       async () => {
-        const bounds = await this.windowTextBounds()
+        const bounds = await this.screenBounds()
         const from = coordsString({
-          relativeTo: 'window',
+          relativeTo: 'screen',
           x: bounds.x,
           y: bounds.y,
         })
         const to = coordsString({
-          relativeTo: 'window',
+          relativeTo: 'screen',
           x: bounds.x + bounds.width,
           y: bounds.y + bounds.height,
         })
 
+        await this.window.focus()
         await runShellCommand(
-          `peekaboo drag --from-coords ${shellQuote(from)} --to-coords ${shellQuote(to)} ${this.window.targetFlags()} --duration 100 --steps 5`,
+          `peekaboo drag --from-coords ${shellQuote(from)} --to-coords ${shellQuote(to)} --duration 100 --steps 5 --no-auto-focus`,
           {
             cwd: process.cwd(),
           },
