@@ -440,8 +440,8 @@ class PeekabooWindow implements AsyncDisposable, PeekabooOcrParent {
     this.windowBounds = options.windowBounds
     this.windowId = options.windowId
     this.mouseGuard = new PeekabooMouseGuard({
+      deadAir: (action) => this.deadAir(action),
       exec: this.exec,
-      windowId: this.windowId,
     })
   }
 
@@ -1563,20 +1563,6 @@ class PeekabooOcrLocator {
   }
 }
 
-class PeekabooWindowClosedAfterMouseMoveError extends Error {
-  constructor(windowId: number, event: MouseMovedEvent) {
-    super(
-      [
-        'Current window closed while test was paused after mouse movement.',
-        `Window id: ${windowId}.`,
-        `Mouse moved ${event.location}.`,
-        `Expected ${formatMousePosition(event.expected)} but saw ${formatMousePosition(event.actual)}.`,
-      ].join(' '),
-    )
-    this.name = 'PeekabooWindowClosedAfterMouseMoveError'
-  }
-}
-
 class PeekabooMouseMovedError extends Error {
   constructor(event: MouseMovedEvent) {
     super(
@@ -1623,16 +1609,17 @@ class PeekabooThrowingMouseGuard {
 }
 
 class PeekabooMouseGuard {
+  private deadAir: <T>(action: () => Promise<T>) => Promise<T>
   private exec: ComputerExec
   private expectedPosition?: MousePosition
-  private pauseSettleMs = 1_000
-  private pollIntervalMs = 100
   private tolerancePixels = 2
-  private windowId: number
 
-  constructor(options: { exec: ComputerExec; windowId: number }) {
+  constructor(options: {
+    deadAir: <T>(action: () => Promise<T>) => Promise<T>
+    exec: ComputerExec
+  }) {
+    this.deadAir = options.deadAir
     this.exec = options.exec
-    this.windowId = options.windowId
   }
 
   async acceptCurrentPosition() {
@@ -1657,34 +1644,15 @@ class PeekabooMouseGuard {
       location,
     }
 
-    sayMouseMoved()
-    await this.pauseUntilMouseSettlesOrWindowCloses(event)
-  }
+    await this.deadAir(async () => {
+      const action = await waitForMouseMovedDialog(event)
 
-  private async pauseUntilMouseSettlesOrWindowCloses(event: MouseMovedEvent) {
-    let lastPosition = event.actual
-    let settledSince = Date.now()
+      if (action === 'fail') throw new PeekabooMouseMovedError(event)
 
-    while (true) {
-      if (!(await peekabooWindowIsOpen(this.exec, this.windowId))) {
-        throw new PeekabooWindowClosedAfterMouseMoveError(this.windowId, event)
-      }
-
-      await sleep(this.pollIntervalMs)
-
-      const actual = await readSystemMousePosition(this.exec)
-
-      if (mousePositionsMatch(actual, lastPosition, this.tolerancePixels)) {
-        if (Date.now() - settledSince >= this.pauseSettleMs) {
-          this.expectedPosition = actual
-          return
-        }
-        continue
-      }
-
-      lastPosition = actual
-      settledSince = Date.now()
-    }
+      await sleep(100)
+      await moveSystemMousePosition(this.exec, event.expected)
+    })
+    this.expectedPosition = event.expected
   }
 }
 
@@ -1870,18 +1838,8 @@ async function readSystemMousePosition(exec: ComputerExec) {
   }
 }
 
-async function peekabooWindowIsOpen(exec: ComputerExec, windowId: number) {
-  try {
-    const result = await exec`peekaboo window list --json`
-    const payload = JSON.parse(result.stdout)
-    const windows = Array.isArray(payload.data && payload.data.windows)
-      ? payload.data.windows
-      : []
-
-    return windows.some((window: any) => Number(window.window_id) === windowId)
-  } catch {
-    return false
-  }
+async function moveSystemMousePosition(exec: ComputerExec, position: MousePosition) {
+  await exec`cliclick ${raw(`m:${formatMousePosition(position)}`)}`
 }
 
 function mousePositionsMatch(
@@ -1899,30 +1857,75 @@ function formatMousePosition(position: MousePosition) {
   return `${position.x},${position.y}`
 }
 
-let activeSayProcess: ReturnType<typeof spawn> | undefined
+async function waitForMouseMovedDialog(
+  event: MouseMovedEvent,
+): Promise<'continue' | 'fail'> {
+  const { promise, resolve } = Promise.withResolvers<'continue' | 'fail'>()
+  const child = spawn('osascript', [
+    '-e',
+    [
+      'display dialog',
+      JSON.stringify(
+        [
+          'Mouse moved; the test is paused.',
+          '',
+          `Location: ${event.location}`,
+          `Expected: ${formatMousePosition(event.expected)}`,
+          `Actual: ${formatMousePosition(event.actual)}`,
+          '',
+          'Continue test will restore the mouse position and resume.',
+        ].join('\n'),
+      ),
+      'buttons {"Continue test", "Fail test"} default button "Continue test" with icon caution',
+      'with title "Peekaboo mouse guard"',
+    ].join(' '),
+  ], {
+    stdio: ['ignore', 'pipe', 'ignore'],
+  })
+  let stdout = ''
 
-function sayMouseMoved() {
-  if (activeSayProcess) {
-    activeSayProcess.kill('SIGTERM')
-    activeSayProcess = undefined
+  if (child.pid) {
+    void moveMouseMovedDialogToTopLeft(child.pid)
   }
 
-  const child = spawn('say', ['mouse moved, pausing'], {
+  child.stdout.on('data', (chunk) => {
+    stdout += String(chunk)
+  })
+  child.on('error', () => resolve('fail'))
+  child.on('exit', (code) => {
+    if (code === 0 && stdout.includes('button returned:Continue test')) {
+      resolve('continue')
+      return
+    }
+
+    resolve('fail')
+  })
+  return await promise
+}
+
+async function moveMouseMovedDialogToTopLeft(processId: number) {
+  await sleep(150)
+  const { promise, resolve } = Promise.withResolvers<void>()
+  const child = spawn('osascript', [
+    '-e',
+    `tell application "System Events" to tell (first process whose unix id is ${processId}) to set position of window 1 to {24, 48}`,
+  ], {
     stdio: 'ignore',
   })
+  const timer = setTimeout(() => {
+    child.kill('SIGTERM')
+    resolve()
+  }, 2_000)
 
-  activeSayProcess = child
   child.on('error', () => {
-    if (activeSayProcess === child) {
-      activeSayProcess = undefined
-    }
+    clearTimeout(timer)
+    resolve()
   })
   child.on('exit', () => {
-    if (activeSayProcess === child) {
-      activeSayProcess = undefined
-    }
+    clearTimeout(timer)
+    resolve()
   })
-  child.unref()
+  await promise
 }
 
 function formatSeconds(ms: number) {
