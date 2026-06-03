@@ -55,7 +55,9 @@ test('tsc in Cursor', async () => {
   `
   await ide.type(tsWithBug, { profile: "linear", delay: 10, noAutoFocus: true })
 
+  await ide.sleep(300)
   await ide.hotkey('cmd,s')
+  await ide.sleep(300)
 
   expect(await computer.readFile('test.ts')).toContain('const username: number')
 
@@ -67,6 +69,7 @@ test('tsc in Cursor', async () => {
 
   await ide.ocr({ text: 'username:' }).hover()
   await ide.ocr({ text: "Type 'string' is not assignable to type 'number'" }).waitFor()
+  await ide.sleep(500)
 
   await numberText.dblclick()
   expect(await ide.copySelection()).toMatchObject({ new: 'number' })
