@@ -66,14 +66,10 @@ test('sqlfu demo', async () => {
 
   await ide.click(ide.center())
 
-  await using video = await ide.startVideo()
-
-  await ide.type(postsObjectSource, {
-    delay: -1,
-    noAutoFocus: true,
-    profile: 'linear',
-  })
+  await ide.type(postsObjectSource, {delay: -1})
   await ide.hotkey('cmd,s')
+
+  await using video = await ide.startVideo()
 
   await computer.waitForFile('posts-object.ts', {
     contains: 'static dbConfig = defineConfig',
@@ -114,7 +110,7 @@ test('sqlfu demo', async () => {
   await ide.type('\n\n' + badMethod, {indent: 2})
   await ide.press('escape')
 
-  const limitt = await ide.ocr('limitt').hover({ linger: 1000 })
+  const limitt = await ide.ocr('limitttt').hover({ linger: 1000 })
   await limitt.replace('limit')
 
   await ide.hotkey('cmd,s')
@@ -144,8 +140,8 @@ test('sqlfu demo', async () => {
   await ide.hotkey('cmd,1')
   await ide.scroll({ direction: 'down', amount: 3, smooth: true })
 
-  await ide.ocr('alter table', {before: 'queries'}).highlight();
-  await ide.hotkey('cmd,right')
+  await ide.ocr('alter table', {before: 'queries'}).click('start');
+  await ide.hotkey('cmd+shift+right')
 
   await video.save()
 }, 240_000)

@@ -1792,14 +1792,16 @@ function ocrTextPositions(
   text: string,
 ): OcrTextPosition[] {
   const positions: OcrTextPosition[] = []
+  const needle = text.toLowerCase()
 
   for (let lineIndex = 0; lineIndex < recognizedText.length; lineIndex += 1) {
     const lineText = recognizedText[lineIndex]
-    let characterOffset = lineText.indexOf(text)
+    const haystack = lineText.toLowerCase()
+    let characterOffset = haystack.indexOf(needle)
 
     while (characterOffset >= 0) {
       positions.push({ characterOffset, lineIndex })
-      characterOffset = lineText.indexOf(text, characterOffset + text.length)
+      characterOffset = haystack.indexOf(needle, characterOffset + text.length)
     }
   }
 
@@ -2037,7 +2039,7 @@ for (lineIndex, observation) in observations.enumerated() {
   recognizedText.append(lineText)
 
   var searchRange = lineText.startIndex..<lineText.endIndex
-  while let range = lineText.range(of: targetText, options: [], range: searchRange) {
+  while let range = lineText.range(of: targetText, options: [.caseInsensitive], range: searchRange) {
     if let textBox = try? candidate.boundingBox(for: range) {
       let box = textBox.boundingBox
       matches.append(TextMatch(
