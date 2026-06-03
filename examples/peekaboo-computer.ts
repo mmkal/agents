@@ -57,6 +57,20 @@ type OcrOptions = {
   text: string
 }
 
+type OcrClickPosition = 'center' | 'end' | 'start'
+
+type ScrollOptions = {
+  amount: number
+  delay?: number
+  direction: 'down' | 'left' | 'right' | 'up'
+  noAutoFocus?: boolean
+  smooth?: boolean
+}
+
+type SleepOptions = {
+  deadAir?: boolean
+}
+
 type PeekabooBounds = {
   height: number
   width: number
@@ -171,6 +185,10 @@ export class PeekabooComputer implements AsyncDisposable, PeekabooCommandParent 
     return await Array.fromAsync(fs.glob(pattern, { cwd: this.directory }))
   }
 
+  async say(message: string) {
+    await this.exec`say ${message}`
+  }
+
   async guardedAction<T>(
     name: string,
     options: GuardedActionOptions,
@@ -259,15 +277,22 @@ export class PeekabooComputer implements AsyncDisposable, PeekabooCommandParent 
     return await fs.readFile(this.resolvePath(path), 'utf8')
   }
 
-  async waitForFile(path: string, options: { contains: string }) {
-    const deadline = Date.now() + 5_000
+  async waitForFile(
+    path: string,
+    options: { contains: string | RegExp; timeout?: number },
+  ) {
+    const deadline = Date.now() + (options.timeout || 5_000)
     let lastContents = ''
 
     while (Date.now() < deadline) {
       try {
         lastContents = await this.readFile(path)
 
-        if (lastContents.includes(options.contains)) {
+        if (options.contains instanceof RegExp && options.contains.test(lastContents)) {
+          return lastContents
+        }
+
+        if (typeof options.contains === 'string' && lastContents.includes(options.contains)) {
           return lastContents
         }
       } catch (error) {
@@ -418,6 +443,23 @@ class PeekabooWindow implements AsyncDisposable, PeekabooOcrParent {
     )
   }
 
+  async scroll(options: ScrollOptions) {
+    const delayFlag =
+      options.delay === undefined ? '' : `--delay ${options.delay}`
+    const targetFlags = options.noAutoFocus ? '' : this.targetFlags()
+
+    await this.guardedAction(
+      `scroll ${options.direction}`,
+      { updatesMousePosition: false },
+      async () => {
+        await this.exec`peekaboo scroll --direction ${options.direction} --amount ${options.amount} ${raw(targetFlags)} ${raw(delayFlag)} ${raw(
+          options.smooth ? '--smooth' : '',
+        )} ${raw(options.noAutoFocus ? '--no-auto-focus' : '')}`
+        await this.sleep(100)
+      },
+    )
+  }
+
   locator(target: ClickTarget) {
     return new PeekabooLocator({
       parent: this,
@@ -489,8 +531,17 @@ class PeekabooWindow implements AsyncDisposable, PeekabooOcrParent {
     return await this.video.deadAir(action)
   }
 
-  async sleep(ms: number) {
-    await new Promise((resolve) => setTimeout(resolve, ms))
+  async sleep(ms: number, options: SleepOptions = {}) {
+    const action = async () => {
+      await new Promise((resolve) => setTimeout(resolve, ms))
+    }
+
+    if (options.deadAir) {
+      await this.deadAir(action)
+      return
+    }
+
+    await action()
   }
 
   async startVideo() {
@@ -513,21 +564,64 @@ class PeekabooWindow implements AsyncDisposable, PeekabooOcrParent {
 
   async type(
     text: string,
-    options: {
-      delay: number
-      noAutoFocus: boolean
-      profile: 'linear'
+    opts?: {
+      indent?: number | string
+      delay?: number
+      noAutoFocus?: boolean
+      profile?: 'linear'
     },
   ) {
+    const options = {
+      ...opts,
+      indent: opts?.indent ?? '',
+      delay: opts?.delay ?? 10,
+      noAutoFocus: opts?.noAutoFocus ?? false,
+      profile: opts?.profile ?? 'linear',
+    }
+
+    if (options.delay < 0) {
+      await this.paste(text, { noAutoFocus: options.noAutoFocus })
+      return
+    }
+
     const targetFlags = options.noAutoFocus ? '' : this.targetFlags()
+
+    if (options.indent) {
+      const indent = typeof options.indent === 'number' ? ' '.repeat(options.indent) : options.indent
+      text = text.split('\n').map(line => indent + line).join('\n')
+    }
 
     await this.guardedAction(
       'type',
       { updatesMousePosition: true },
       async () => {
-        await this.exec`peekaboo type --text ${text} ${raw(targetFlags)} --profile ${raw(options.profile)} --delay ${raw(String(options.delay))} ${raw(
+        await this.exec({ timeout: (text.length * options.delay) + 5000 })`peekaboo type --text ${text} ${raw(targetFlags)} --profile ${raw(options.profile)} --delay ${raw(String(options.delay))} ${raw(
           options.noAutoFocus ? '--no-auto-focus' : '',
         )}`
+      },
+    )
+  }
+
+  async paste(text: string, options: { noAutoFocus?: boolean } = {}) {
+    const targetFlags = options.noAutoFocus ? '' : this.targetFlags()
+
+    await this.guardedAction(
+      'paste',
+      { updatesMousePosition: false },
+      async () => {
+        await this.exec`peekaboo clipboard save --slot ${this.clipboardSlot}`
+
+        try {
+          await this.exec`peekaboo clipboard set --text ${text}`
+          await this.exec`peekaboo hotkey cmd,v ${raw(targetFlags)} ${raw(
+            options.noAutoFocus ? '--no-auto-focus' : '',
+          )}`
+          await this.sleep(100)
+        } finally {
+          await this.exec`peekaboo clipboard restore --slot ${this.clipboardSlot}`.catch(
+            () => {},
+          )
+        }
       },
     )
   }
@@ -636,7 +730,8 @@ class PeekabooVideo implements AsyncDisposable {
   }
 
   async save() {
-    this.saved = this.saved || this.stopAndFinalize()
+    if (this.saved) return this.saved;
+    this.saved = this.stopAndFinalize()
     const path = await this.saved
     console.log(`Video assets: ${path}`)
     return path
@@ -999,12 +1094,12 @@ class PeekabooOcrLocator {
     this.parent = options.parent
   }
 
-  async click() {
+  async click(position: OcrClickPosition = 'center') {
     await this.parent.guardedAction(
       'ocr.click',
       { updatesMousePosition: true },
       async () => {
-        const coords = await this.screenCoordinates()
+        const coords = await this.screenCoordinates(position)
         await this.parent.focus()
         await this.parent.exec`peekaboo click --coords ${coordsString(coords)} --global-coords --no-auto-focus`
         await this.parent.sleep(100)
@@ -1012,12 +1107,12 @@ class PeekabooOcrLocator {
     )
   }
 
-  async dblclick() {
+  async dblclick(position: OcrClickPosition = 'center') {
     await this.parent.guardedAction(
       'ocr.dblclick',
       { updatesMousePosition: true },
       async () => {
-        const coords = await this.screenCoordinates()
+        const coords = await this.screenCoordinates(position)
 
         await this.parent.focus()
         await this.parent.exec`peekaboo click --coords ${coordsString(coords)} --global-coords --double --no-auto-focus`
@@ -1075,9 +1170,11 @@ class PeekabooOcrLocator {
     }
   }
 
-  async screenCoordinates(): Promise<ScreenCoordinates> {
+  async screenCoordinates(
+    position: OcrClickPosition = 'center',
+  ): Promise<ScreenCoordinates> {
     const match = await this.resolve()
-    return centerOfScreenBounds(match.screenBounds)
+    return screenCoordinatesForOcrPosition(match.screenBounds, position)
   }
 
   async screenBounds(): Promise<ScreenBounds> {
@@ -1553,6 +1650,29 @@ function centerOfScreenBounds(bounds: ScreenBounds): ScreenCoordinates {
     x: Math.round(bounds.x + bounds.width / 2),
     y: Math.round(bounds.y + bounds.height / 2),
   }
+}
+
+function screenCoordinatesForOcrPosition(
+  bounds: ScreenBounds,
+  position: OcrClickPosition,
+): ScreenCoordinates {
+  if (position === 'start') {
+    return {
+      relativeTo: 'screen',
+      x: Math.round(bounds.x),
+      y: Math.round(bounds.y + bounds.height / 2),
+    }
+  }
+
+  if (position === 'end') {
+    return {
+      relativeTo: 'screen',
+      x: Math.round(bounds.x + bounds.width),
+      y: Math.round(bounds.y + bounds.height / 2),
+    }
+  }
+
+  return centerOfScreenBounds(bounds)
 }
 
 function coordsString(coords: ScreenCoordinates | WindowCoordinates) {
