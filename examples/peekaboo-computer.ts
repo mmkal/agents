@@ -116,6 +116,29 @@ type VideoStepSpan = VideoSpan & {
   title: string
 }
 
+type AutozoomTrigger = 'click' | 'hover' | 'type'
+
+type VideoFilter =
+  | {
+      kind: 'complex'
+      outputLabel: string
+      value: string
+    }
+  | {
+      kind: 'simple'
+      value: string
+    }
+
+type VideoZoomSpan = VideoSpan & {
+  height: number
+  trigger: AutozoomTrigger
+  width: number
+  x: number
+  y: number
+}
+
+type VideoZoomEvent = Omit<VideoZoomSpan, 'end'>
+
 type PeekabooBounds = {
   height: number
   width: number
@@ -177,6 +200,10 @@ type PeekabooCommandParent = {
 
 type PeekabooLocatorParent = PeekabooCommandParent & {
   focus(): Promise<void>
+  recordAutozoomPoint(
+    trigger: Extract<AutozoomTrigger, 'click' | 'hover'>,
+    coords: ScreenCoordinates | WindowCoordinates,
+  ): void
 }
 
 type PeekabooOcrParent = PeekabooLocatorParent & {
@@ -463,6 +490,7 @@ class PeekabooWindow implements AsyncDisposable, PeekabooOcrParent {
       async () => {
         await this.focus()
         await this.exec`peekaboo click --coords ${target.coords} ${raw(this.targetFlags())} --no-auto-focus`
+        this.recordAutozoomPoint('click', windowCoordinatesFromCoordsString(target.coords))
         await this.sleep(100)
       },
     )
@@ -578,6 +606,13 @@ class PeekabooWindow implements AsyncDisposable, PeekabooOcrParent {
 
   async findOcrMatch(options: OcrMatchOptions): Promise<OcrMatchResult> {
     const imagePath = await this.captureWindowImage()
+    return await this.findOcrMatchInImage(imagePath, options)
+  }
+
+  async findOcrMatchInImage(
+    imagePath: string,
+    options: OcrMatchOptions,
+  ): Promise<OcrMatchResult> {
     const scriptPath = await this.visionOcrScriptPath()
     const result = await this.exec`swift ${scriptPath} ${imagePath} ${options.text}`
     const payload = JSON.parse(result.stdout)
@@ -669,6 +704,7 @@ class PeekabooWindow implements AsyncDisposable, PeekabooOcrParent {
       parent: this,
       path: videoPath,
       stepEvents: isStepEventSource(this.parent) ? this.parent : undefined,
+      videoBounds: videoBoundsForWindow(this.windowBounds),
       windowId: this.windowId,
     })
     await video.start()
@@ -701,6 +737,8 @@ class PeekabooWindow implements AsyncDisposable, PeekabooOcrParent {
       text = text.split('\n').map(line => indent + line).join('\n')
     }
 
+    const startedAt = this.video?.timestamp()
+
     await this.guardedAction(
       'type',
       { updatesMousePosition: true },
@@ -710,10 +748,13 @@ class PeekabooWindow implements AsyncDisposable, PeekabooOcrParent {
         )}`
       },
     )
+
+    await this.recordTypedAutozoom(text, startedAt)
   }
 
   async paste(text: string, options: { noAutoFocus?: boolean } = {}) {
     const targetFlags = options.noAutoFocus ? '' : this.targetFlags()
+    const startedAt = this.video?.timestamp()
 
     await this.guardedAction(
       'paste',
@@ -734,6 +775,8 @@ class PeekabooWindow implements AsyncDisposable, PeekabooOcrParent {
         }
       },
     )
+
+    await this.recordTypedAutozoom(text, startedAt)
   }
 
   targetFlags() {
@@ -760,6 +803,85 @@ class PeekabooWindow implements AsyncDisposable, PeekabooOcrParent {
 
   async acceptCurrentMousePosition() {
     await this.mouseGuard.acceptCurrentPosition()
+  }
+
+  recordAutozoomPoint(
+    trigger: Extract<AutozoomTrigger, 'click' | 'hover'>,
+    coords: ScreenCoordinates | WindowCoordinates,
+  ) {
+    if (!this.video?.autozoomEnabled(trigger)) {
+      return
+    }
+
+    const windowCoords = coords.relativeTo === 'screen'
+      ? windowCoordinatesForScreenCoordinates(coords, this.windowBounds)
+      : coords
+
+    this.video.recordAutozoom(
+      trigger,
+      zoomBoundsAroundWindowPoint(windowCoords, this.windowBounds),
+    )
+  }
+
+  private async recordTypedAutozoom(text: string, start: number | undefined) {
+    if (!this.video?.autozoomEnabled('type') || start === undefined) {
+      return
+    }
+
+    this.video.endAutozoomAt(start)
+
+    const imagePath = await this.captureWindowImage().catch(() => undefined)
+
+    if (!imagePath) {
+      return
+    }
+
+    this.video.queueAutozoom(
+      this.recordTypedAutozoomFromImage(text, imagePath, start),
+    )
+  }
+
+  private async recordTypedAutozoomFromImage(
+    text: string,
+    imagePath: string,
+    start: number,
+  ) {
+    const bounds = await this.findTypedTextWindowBoundsInImage(
+      text,
+      imagePath,
+    ).catch(() => undefined)
+
+    if (!bounds) {
+      return
+    }
+
+    this.video?.recordAutozoom(
+      'type',
+      expandWindowBounds(bounds, 72, this.windowBounds),
+      { start },
+    )
+  }
+
+  private async findTypedTextWindowBoundsInImage(
+    text: string,
+    imagePath: string,
+  ) {
+    const words = autozoomWords(text)
+    const probes = autozoomWordProbes(words)
+    const bounds: WindowBounds[] = []
+
+    for (const probe of probes) {
+      const match = await this.findOcrMatchInImage(
+        imagePath,
+        probe,
+      ).catch(() => undefined)
+
+      if (match) {
+        bounds.push(windowBoundsForScreenBounds(match.screenBounds, this.windowBounds))
+      }
+    }
+
+    return unionWindowBounds(bounds)
   }
 
   private async captureWindowImage() {
@@ -795,6 +917,7 @@ class PeekabooWindow implements AsyncDisposable, PeekabooOcrParent {
 
 class PeekabooVideo implements AsyncDisposable {
   path: string
+  private autozoomTriggers = new Set<AutozoomTrigger>()
   private assPath: string
   private assetsDirectory: string
   private captionedPath: string
@@ -806,6 +929,7 @@ class PeekabooVideo implements AsyncDisposable {
   private helperPath: string
   private metaPath: string
   private parent: PeekabooCommandParent
+  private pendingAutozooms: Promise<void>[] = []
   private ready?: Promise<void>
   private rawPath: string
   private saved?: Promise<string>
@@ -819,13 +943,18 @@ class PeekabooVideo implements AsyncDisposable {
   private stdout = ''
   private stopped = false
   private tightPath: string
+  private videoEndedAt?: number
+  private videoBounds: { height: number; width: number }
   private windowId: number
+  private zoomBreaks: number[] = []
+  private zoomEvents: VideoZoomEvent[] = []
 
   constructor(options: {
     assetsDirectory: string
     parent: PeekabooCommandParent
     path: string
     stepEvents?: StepEventSource
+    videoBounds: { height: number; width: number }
     windowId: number
   }) {
     this.assPath = join(options.path, 'steps.ass')
@@ -842,6 +971,7 @@ class PeekabooVideo implements AsyncDisposable {
     )
     this.stepEvents = options.stepEvents
     this.tightPath = join(options.path, 'tight.mp4')
+    this.videoBounds = options.videoBounds
     this.windowId = options.windowId
   }
 
@@ -875,6 +1005,58 @@ class PeekabooVideo implements AsyncDisposable {
     return this
   }
 
+  autozoom(triggers: AutozoomTrigger[]) {
+    if (this.saved) {
+      throw new Error(`Cannot configure autozoom after video save has started: ${this.path}`)
+    }
+
+    this.autozoomTriggers = new Set(triggers)
+    return this
+  }
+
+  autozoomEnabled(trigger: AutozoomTrigger) {
+    return this.autozoomTriggers.has(trigger)
+  }
+
+  timestamp() {
+    if (!this.startedAt) {
+      return undefined
+    }
+
+    return Math.round(performance.now() - this.startedAt)
+  }
+
+  recordAutozoom(
+    trigger: AutozoomTrigger,
+    bounds: WindowBounds,
+    options: { start?: number } = {},
+  ) {
+    if (!this.autozoomEnabled(trigger)) {
+      return
+    }
+
+    const start = options.start === undefined ? this.timestamp() : options.start
+
+    if (start === undefined) {
+      return
+    }
+
+    const zoomBounds = clampWindowBounds(bounds, this.videoBounds)
+    this.zoomEvents.push({
+      ...zoomBounds,
+      start,
+      trigger,
+    })
+  }
+
+  endAutozoomAt(end: number) {
+    this.zoomBreaks.push(end)
+  }
+
+  queueAutozoom(promise: Promise<void>) {
+    this.pendingAutozooms.push(promise.catch(() => {}))
+  }
+
   async deadAir<T>(action: () => Promise<T>) {
     if (!this.startedAt || this.deadAirDepth > 0) {
       return await action()
@@ -905,6 +1087,7 @@ class PeekabooVideo implements AsyncDisposable {
 
     this.detachStepListeners?.()
     this.finishActiveSteps()
+    this.videoEndedAt = this.timestamp()
 
     if (!this.stopped && child.exitCode === null && !child.killed) {
       if (!child.stdin) {
@@ -916,6 +1099,7 @@ class PeekabooVideo implements AsyncDisposable {
     }
 
     await finish
+    await this.finishPendingAutozooms()
 
     const stat = await fs.stat(this.rawPath).catch(() => undefined)
 
@@ -1099,6 +1283,7 @@ class PeekabooVideo implements AsyncDisposable {
             : undefined,
           steps: normalizeVideoStepSpans(this.stepSpans),
           timebase: 'ms',
+          zooms: this.videoZoomSpans(),
         },
         null,
         2,
@@ -1108,13 +1293,12 @@ class PeekabooVideo implements AsyncDisposable {
 
   private async writeCaptionedVideo() {
     await this.writeAssCaptions()
+    const videoFilter = this.captionedVideoFilter()
 
     await this.writeVideo({
-      filter: this.stepSpans.length === 0
-        ? undefined
-        : `ass=${escapeFfmpegFilterValue(this.assPath)}`,
       inputPath: this.rawPath,
       outputPath: this.captionedPath,
+      videoFilter,
     })
   }
 
@@ -1138,19 +1322,32 @@ class PeekabooVideo implements AsyncDisposable {
       .join('+')})`
 
     await this.writeVideo({
-      filter: `select='${selectExpression}',setpts=N/(60*TB)`,
       inputPath: this.captionedPath,
       outputPath: this.tightPath,
+      videoFilter: {
+        kind: 'simple',
+        value: `select='${selectExpression}',setpts=N/(60*TB)`,
+      },
     })
   }
 
   private async writeVideo(options: {
-    filter?: string
     inputPath: string
     outputPath: string
+    videoFilter?: VideoFilter
   }) {
-    if (this.soundtrackPath && options.filter) {
-      await this.parent.exec({ timeout: 120_000 })`ffmpeg -y -hide_banner -loglevel error -i ${options.inputPath} -stream_loop -1 -i ${this.soundtrackPath} -vf ${options.filter} -map 0:v:0 -map 1:a:0 -c:a aac -shortest -r 60 ${options.outputPath}`
+    if (this.soundtrackPath && options.videoFilter?.kind === 'complex') {
+      await this.parent.exec({ timeout: 120_000 })`ffmpeg -y -hide_banner -loglevel error -i ${options.inputPath} -stream_loop -1 -i ${this.soundtrackPath} -filter_complex ${options.videoFilter.value} -map ${`[${options.videoFilter.outputLabel}]`} -map 1:a:0 -c:a aac -shortest -r 60 ${options.outputPath}`
+      return
+    }
+
+    if (options.videoFilter?.kind === 'complex') {
+      await this.parent.exec({ timeout: 120_000 })`ffmpeg -y -hide_banner -loglevel error -i ${options.inputPath} -filter_complex ${options.videoFilter.value} -map ${`[${options.videoFilter.outputLabel}]`} -an -r 60 ${options.outputPath}`
+      return
+    }
+
+    if (this.soundtrackPath && options.videoFilter?.kind === 'simple') {
+      await this.parent.exec({ timeout: 120_000 })`ffmpeg -y -hide_banner -loglevel error -i ${options.inputPath} -stream_loop -1 -i ${this.soundtrackPath} -vf ${options.videoFilter.value} -map 0:v:0 -map 1:a:0 -c:a aac -shortest -r 60 ${options.outputPath}`
       return
     }
 
@@ -1159,12 +1356,48 @@ class PeekabooVideo implements AsyncDisposable {
       return
     }
 
-    if (options.filter) {
-      await this.parent.exec({ timeout: 120_000 })`ffmpeg -y -hide_banner -loglevel error -i ${options.inputPath} -vf ${options.filter} -an -r 60 ${options.outputPath}`
+    if (options.videoFilter?.kind === 'simple') {
+      await this.parent.exec({ timeout: 120_000 })`ffmpeg -y -hide_banner -loglevel error -i ${options.inputPath} -vf ${options.videoFilter.value} -an -r 60 ${options.outputPath}`
       return
     }
 
     await fs.copyFile(options.inputPath, options.outputPath)
+  }
+
+  private captionedVideoFilter(): VideoFilter | undefined {
+    const zoomFilter = autozoomVideoFilter({
+      assPath: this.stepSpans.length === 0 ? undefined : this.assPath,
+      videoBounds: this.videoBounds,
+      zooms: this.videoZoomSpans(),
+    })
+
+    if (zoomFilter) {
+      return zoomFilter
+    }
+
+    if (this.stepSpans.length > 0) {
+      return {
+        kind: 'simple',
+        value: `ass=${escapeFfmpegFilterValue(this.assPath)}`,
+      }
+    }
+
+    return undefined
+  }
+
+  private async finishPendingAutozooms() {
+    const pending = this.pendingAutozooms
+    this.pendingAutozooms = []
+
+    await Promise.all(pending)
+  }
+
+  private videoZoomSpans() {
+    return normalizeVideoZoomEvents(
+      this.zoomEvents,
+      this.zoomBreaks,
+      this.videoEndedAt || this.timestamp() || 0,
+    )
   }
 }
 
@@ -1345,6 +1578,10 @@ class PeekabooLocator {
       async () => {
         await this.parent.focus()
         await this.parent.exec`peekaboo click --coords ${this.target.coords} ${raw(this.parent.targetFlags())} --double --no-auto-focus`
+        this.parent.recordAutozoomPoint(
+          'click',
+          windowCoordinatesFromCoordsString(this.target.coords),
+        )
         await this.parent.sleep(100)
       },
     )
@@ -1375,6 +1612,7 @@ class PeekabooOcrLocator {
         const coords = await this.screenCoordinates(position)
         await this.parent.focus()
         await this.parent.exec`peekaboo click --coords ${coordsString(coords)} --global-coords --no-auto-focus`
+        this.parent.recordAutozoomPoint('click', coords)
         await this.parent.sleep(100)
       },
     )
@@ -1428,6 +1666,7 @@ class PeekabooOcrLocator {
 
         await this.parent.focus()
         await this.parent.exec`peekaboo click --coords ${coordsString(coords)} --global-coords --double --no-auto-focus`
+        this.parent.recordAutozoomPoint('click', coords)
         await this.parent.sleep(100)
       },
     )
@@ -1441,6 +1680,7 @@ class PeekabooOcrLocator {
         const coords = await this.screenCoordinates()
 
         await this.parent.exec`peekaboo move --coords ${coordsString(coords)} ${raw(this.parent.targetFlags())} --duration 150 --steps 5 --profile linear`
+        this.parent.recordAutozoomPoint('hover', coords)
         await this.parent.sleep(linger)
         return this
       },
@@ -1992,6 +2232,103 @@ function formatAssTime(ms: number) {
   return `${hours}:${String(minutes).padStart(2, '0')}:${String(seconds).padStart(2, '0')}.${String(centiseconds).padStart(2, '0')}`
 }
 
+function autozoomVideoFilter(options: {
+  assPath?: string
+  videoBounds: { height: number; width: number }
+  zooms: VideoZoomSpan[]
+}): VideoFilter | undefined {
+  if (options.zooms.length === 0) {
+    return undefined
+  }
+
+  const segments = autozoomVideoSegments(options.zooms)
+  const filters: string[] = []
+  const labels: string[] = []
+
+  for (let index = 0; index < segments.length; index += 1) {
+    const segment = segments[index]
+    const label = `az${index}`
+    labels.push(`[${label}]`)
+
+    const trim = `[0:v]trim=start=${formatSeconds(segment.start)}:end=${formatSeconds(segment.end)},setpts=PTS-STARTPTS`
+
+    if (segment.zoom) {
+      const crop = autozoomCrop(segment.zoom, options.videoBounds)
+      filters.push(
+        `${trim},crop=${crop.width}:${crop.height}:${crop.x}:${crop.y},scale=${options.videoBounds.width}:${options.videoBounds.height}[${label}]`,
+      )
+      continue
+    }
+
+    filters.push(`${trim}[${label}]`)
+  }
+
+  let outputLabel = labels.length === 1 ? labels[0].slice(1, -1) : 'azconcat'
+
+  if (labels.length > 1) {
+    filters.push(`${labels.join('')}concat=n=${labels.length}:v=1:a=0[${outputLabel}]`)
+  }
+
+  if (options.assPath) {
+    filters.push(`[${outputLabel}]ass=${escapeFfmpegFilterValue(options.assPath)}[azout]`)
+    outputLabel = 'azout'
+  }
+
+  return {
+    kind: 'complex',
+    outputLabel,
+    value: filters.join(';'),
+  }
+}
+
+function autozoomVideoSegments(zooms: VideoZoomSpan[]) {
+  const segments: Array<VideoSpan & { zoom?: VideoZoomSpan }> = []
+  let cursor = 0
+
+  for (const zoom of zooms) {
+    if (zoom.start > cursor) {
+      segments.push({
+        end: zoom.start,
+        start: cursor,
+      })
+    }
+
+    segments.push({
+      end: zoom.end,
+      start: zoom.start,
+      zoom,
+    })
+    cursor = Math.max(cursor, zoom.end)
+  }
+
+  return segments.filter((segment) => segment.end > segment.start)
+}
+
+function autozoomCrop(
+  zoom: VideoZoomSpan,
+  videoBounds: { height: number; width: number },
+) {
+  const cropWidth = evenNumber(Math.round(videoBounds.width / 1.35))
+  const cropHeight = evenNumber(Math.round(videoBounds.height / 1.35))
+  const centerX = zoom.x + zoom.width / 2
+  const centerY = zoom.y + zoom.height / 2
+
+  return {
+    height: cropHeight,
+    width: cropWidth,
+    x: clampNumber(
+      Math.round(centerX - cropWidth / 2),
+      0,
+      Math.max(0, videoBounds.width - cropWidth),
+    ),
+    y: clampNumber(
+      Math.round(centerY - cropHeight / 2),
+      0,
+      Math.max(0, videoBounds.height - cropHeight),
+    ),
+  }
+}
+
 function isStepEventSource(value: unknown): value is StepEventSource {
   return (
     typeof value === 'object' &&
@@ -2026,6 +2363,66 @@ function normalizeVideoStepSpans(spans: VideoStepSpan[]): VideoStepSpan[] {
     .filter((span) => span.end > span.start)
     .sort((left, right) => left.start - right.start)
     .map((span) => ({ ...span }))
+}
+
+function normalizeVideoZoomEvents(
+  events: VideoZoomEvent[],
+  breaks: number[],
+  finalEnd: number,
+): VideoZoomSpan[] {
+  const sorted = events
+    .filter((event) => event.start < finalEnd)
+    .sort((left, right) => left.start - right.start)
+  const breakpoints = [...breaks, finalEnd].sort((left, right) => left - right)
+  const spans: VideoZoomSpan[] = []
+
+  for (let index = 0; index < sorted.length; index += 1) {
+    const event = sorted[index]
+    const nextEvent = sorted[index + 1]
+    const nextBreakpoint = breakpoints.find((breakpoint) => breakpoint > event.start)
+    const end = Math.min(
+      nextEvent ? nextEvent.start : finalEnd,
+      nextBreakpoint || finalEnd,
+      finalEnd,
+    )
+
+    if (end <= event.start) {
+      continue
+    }
+
+    spans.push({
+      ...event,
+      end,
+    })
+  }
+
+  return spans
+}
+
+function autozoomWords(text: string) {
+  return text.match(/[A-Za-z0-9_$]+/g) || []
+}
+
+function autozoomWordProbes(words: string[]): OcrMatchOptions[] {
+  const probes: OcrMatchOptions[] = []
+  const indexes = Array.from(
+    new Set([
+      0,
+      1,
+      words.length - 2,
+      words.length - 1,
+    ]),
+  ).filter((index) => index >= 0 && index < words.length)
+
+  for (const index of indexes) {
+    probes.push({
+      after: index > 0 ? words[index - 1] : undefined,
+      before: index < words.length - 1 ? words[index + 1] : undefined,
+      text: words[index],
+    })
+  }
+
+  return probes
 }
 
 type OcrTextPosition = {
@@ -2149,6 +2546,20 @@ function coordsString(coords: ScreenCoordinates | WindowCoordinates) {
   return `${Math.round(coords.x)},${Math.round(coords.y)}`
 }
 
+function windowCoordinatesFromCoordsString(coords: string): WindowCoordinates {
+  const match = coords.match(/^(-?\d+(?:\.\d+)?),(-?\d+(?:\.\d+)?)$/)
+
+  if (!match) {
+    throw new Error(`Invalid coordinate string: ${coords}`)
+  }
+
+  return {
+    relativeTo: 'window',
+    x: Number(match[1]),
+    y: Number(match[2]),
+  }
+}
+
 function roundScreenBounds(bounds: ScreenBounds): ScreenBounds {
   return {
     height: Math.round(bounds.height),
@@ -2211,6 +2622,109 @@ function windowBoundsForScreenBounds(
     x: Math.round(rounded.x - windowBounds.x),
     y: Math.round(rounded.y - windowBounds.y),
   }
+}
+
+function videoBoundsForWindow(windowBounds: PeekabooBounds) {
+  return {
+    height: evenNumber(Math.max(2, Math.round(windowBounds.height))),
+    width: evenNumber(Math.max(2, Math.round(windowBounds.width))),
+  }
+}
+
+function zoomBoundsAroundWindowPoint(
+  point: WindowCoordinates,
+  windowBounds: PeekabooBounds,
+): WindowBounds {
+  const width = Math.min(460, Math.round(windowBounds.width))
+  const height = Math.min(300, Math.round(windowBounds.height))
+
+  return {
+    height,
+    relativeTo: 'window',
+    width,
+    x: clampNumber(
+      Math.round(point.x - width / 2),
+      0,
+      Math.max(0, Math.round(windowBounds.width) - width),
+    ),
+    y: clampNumber(
+      Math.round(point.y - height / 2),
+      0,
+      Math.max(0, Math.round(windowBounds.height) - height),
+    ),
+  }
+}
+
+function expandWindowBounds(
+  bounds: WindowBounds,
+  padding: number,
+  windowBounds: PeekabooBounds,
+): WindowBounds {
+  const x = clampNumber(bounds.x - padding, 0, Math.round(windowBounds.width))
+  const y = clampNumber(bounds.y - padding, 0, Math.round(windowBounds.height))
+  const right = clampNumber(
+    bounds.x + bounds.width + padding,
+    0,
+    Math.round(windowBounds.width),
+  )
+  const bottom = clampNumber(
+    bounds.y + bounds.height + padding,
+    0,
+    Math.round(windowBounds.height),
+  )
+
+  return {
+    height: Math.max(1, bottom - y),
+    relativeTo: 'window',
+    width: Math.max(1, right - x),
+    x,
+    y,
+  }
+}
+
+function unionWindowBounds(bounds: WindowBounds[]) {
+  if (bounds.length === 0) {
+    return undefined
+  }
+
+  const left = Math.min(...bounds.map((bound) => bound.x))
+  const top = Math.min(...bounds.map((bound) => bound.y))
+  const right = Math.max(...bounds.map((bound) => bound.x + bound.width))
+  const bottom = Math.max(...bounds.map((bound) => bound.y + bound.height))
+
+  return {
+    height: Math.max(1, bottom - top),
+    relativeTo: 'window' as const,
+    width: Math.max(1, right - left),
+    x: left,
+    y: top,
+  }
+}
+
+function clampWindowBounds(
+  bounds: WindowBounds,
+  videoBounds: { height: number; width: number },
+) {
+  const x = clampNumber(bounds.x, 0, videoBounds.width - 1)
+  const y = clampNumber(bounds.y, 0, videoBounds.height - 1)
+  const right = clampNumber(bounds.x + bounds.width, x + 1, videoBounds.width)
+  const bottom = clampNumber(bounds.y + bounds.height, y + 1, videoBounds.height)
+
+  return {
+    height: Math.max(1, bottom - y),
+    width: Math.max(1, right - x),
+    x,
+    y,
+  }
+}
+
+function clampNumber(value: number, min: number, max: number) {
+  return Math.min(max, Math.max(min, value))
+}
+
+function evenNumber(value: number) {
+  const rounded = Math.max(2, Math.round(value))
+  return rounded - (rounded % 2)
 }
 
 const focusedScrollSwiftSource = `
