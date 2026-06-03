@@ -800,7 +800,7 @@ struct Recorder {
     let config = SCStreamConfiguration()
     config.width = evenWidth
     config.height = evenHeight
-    config.minimumFrameInterval = CMTime(value: 1, timescale: 30)
+    config.minimumFrameInterval = CMTime(value: 1, timescale: 60)
     config.queueDepth = 8
     config.showsCursor = true
     config.pixelFormat = kCVPixelFormatType_32BGRA
