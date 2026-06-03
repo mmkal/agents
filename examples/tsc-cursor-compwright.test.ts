@@ -44,6 +44,7 @@ test('tsc in Cursor', async () => {
 
   await ide.hotkey('cmd,1')
   await ide.click(ide.center())
+  await using video = await ide.startVideo()
 
   const tsWithBug = dedent`
     const nameArg = process.argv.find((arg) => arg.startsWith('--name='))

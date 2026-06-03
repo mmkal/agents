@@ -92,20 +92,34 @@ type WindowBounds = {
 }
 
 export class PeekabooComputer implements AsyncDisposable {
+  assetsDirectory: string
   directory: string
   exec: ComputerExec
+  parentDirectory: string
 
   static async create(testState: {currentTestName?: string}) {
     const slug = slugify(testState.currentTestName || 'compwright-demo')
     const parent = mkdtempSync(join(tmpdir(), `${slug}-`))
     const directory = join(parent, slug)
-    const computer = new PeekabooComputer(directory)
+    const assetsDirectory = join(parent, 'assets')
+    const computer = new PeekabooComputer({
+      assetsDirectory,
+      directory,
+      parentDirectory: parent,
+    })
     await fs.mkdir(computer.directory, { recursive: true })
+    await fs.mkdir(computer.assetsDirectory, { recursive: true })
     return computer
   }
 
-  private constructor(directory: string) {
-    this.directory = directory
+  private constructor(options: {
+    assetsDirectory: string
+    directory: string
+    parentDirectory: string
+  }) {
+    this.assetsDirectory = options.assetsDirectory
+    this.directory = options.directory
+    this.parentDirectory = options.parentDirectory
     this.exec = createExec(() =>
       existsSync(join(this.directory, 'package.json'))
         ? this.directory
@@ -132,6 +146,10 @@ export class PeekabooComputer implements AsyncDisposable {
     const waitFlag = options.waitUntilReady ? ' --wait-until-ready' : ''
     const resolvedTarget = this.resolvePath(target)
 
+    if (resolvedTarget === this.directory) {
+      await closePeekabooWindows(options.app, windowTitle)
+    }
+
     await runShellCommand(
       `peekaboo open ${shellQuote(resolvedTarget)} --app ${shellQuote(options.app)}${waitFlag}`,
       {
@@ -142,6 +160,7 @@ export class PeekabooComputer implements AsyncDisposable {
     const peekabooWindow = await waitForPeekabooWindow(options.app, windowTitle)
 
     return new PeekabooWindow({
+      assetsDirectory: this.assetsDirectory,
       clipboardSlot: `demo-helper-${basename(this.directory)}`,
       directory: this.directory,
       windowBounds: peekabooWindow.bounds,
@@ -209,6 +228,7 @@ export class PeekabooComputer implements AsyncDisposable {
 }
 
 class PeekabooWindow implements AsyncDisposable {
+  private assetsDirectory: string
   private clipboardSlot: string
   private directory: string
   private exec: ComputerExec
@@ -218,11 +238,13 @@ class PeekabooWindow implements AsyncDisposable {
   private windowId: number
 
   constructor(options: {
+    assetsDirectory: string
     clipboardSlot: string
     directory: string
     windowBounds: PeekabooBounds
     windowId: number
   }) {
+    this.assetsDirectory = options.assetsDirectory
     this.clipboardSlot = options.clipboardSlot
     this.directory = options.directory
     this.windowBounds = options.windowBounds
@@ -382,6 +404,25 @@ class PeekabooWindow implements AsyncDisposable {
     await new Promise((resolve) => setTimeout(resolve, ms))
   }
 
+  async startVideo() {
+    await fs.mkdir(this.assetsDirectory, { recursive: true })
+    const videoPath = join(
+      this.assetsDirectory,
+      `video-${Date.now()}-${this.windowId}.mp4`,
+    )
+    const framesDirectory = join(
+      this.assetsDirectory,
+      `video-frames-${Date.now()}-${this.windowId}`,
+    )
+    const video = new PeekabooVideo({
+      framesDirectory,
+      path: videoPath,
+      targetFlags: this.targetFlags(),
+    })
+    await video.start()
+    return video
+  }
+
   async type(
     text: string,
     options: {
@@ -427,7 +468,7 @@ class PeekabooWindow implements AsyncDisposable {
   private async captureWindowImage() {
     this.ocrCaptureIndex += 1
     const imagePath = join(
-      this.directory,
+      this.assetsDirectory,
       `ocr-${this.ocrCaptureIndex}-${Date.now()}.png`,
     )
 
@@ -452,6 +493,126 @@ class PeekabooWindow implements AsyncDisposable {
     const scriptPath = join(this.directory, 'vision-ocr.swift')
     await fs.writeFile(scriptPath, visionOcrSwiftSource)
     return scriptPath
+  }
+}
+
+class PeekabooVideo implements AsyncDisposable {
+  path: string
+  private captureInterval?: ReturnType<typeof setInterval>
+  private captureChain = Promise.resolve()
+  private frameCount = 0
+  private frameIntervalMs = 250
+  private frameRate = 4
+  private framesDirectory: string
+  private saved?: Promise<string>
+  private stopped = false
+  private targetFlags: string
+
+  constructor(options: {
+    framesDirectory: string
+    path: string
+    targetFlags: string
+  }) {
+    this.framesDirectory = options.framesDirectory
+    this.path = options.path
+    this.targetFlags = options.targetFlags
+  }
+
+  async start() {
+    await fs.mkdir(this.framesDirectory, { recursive: true })
+    await this.captureFrame({ required: true })
+    this.captureInterval = setInterval(() => {
+      this.captureChain = this.captureChain.then(() =>
+        this.captureFrame({ required: false }),
+      )
+    }, this.frameIntervalMs)
+  }
+
+  async [Symbol.asyncDispose]() {
+    await this.save()
+  }
+
+  async save() {
+    this.saved = this.saved || this.stopAndFinalize()
+    return await this.saved
+  }
+
+  private async stopAndFinalize() {
+    this.stopped = true
+
+    if (this.captureInterval) {
+      clearInterval(this.captureInterval)
+      this.captureInterval = undefined
+    }
+
+    await this.captureChain
+
+    if (this.frameCount === 0) {
+      await this.captureFrame({ required: true })
+    }
+
+    await runShellCommand(
+      [
+        'ffmpeg',
+        '-y',
+        '-hide_banner',
+        '-loglevel error',
+        '-framerate',
+        String(this.frameRate),
+        '-pattern_type glob',
+        '-i',
+        shellQuote(join(this.framesDirectory, 'frame-*.png')),
+        '-vf',
+        shellQuote('scale=trunc(iw/2)*2:trunc(ih/2)*2'),
+        '-c:v libx264',
+        '-pix_fmt yuv420p',
+        shellQuote(this.path),
+      ].join(' '),
+      {
+        cwd: process.cwd(),
+        timeout: 30_000,
+      },
+    )
+
+    const stat = await fs.stat(this.path).catch(() => undefined)
+
+    if (!stat || stat.size === 0) {
+      throw new Error(
+        [
+          `Video was not saved: ${this.path}`,
+          `Frames directory: ${this.framesDirectory}`,
+        ]
+          .filter(Boolean)
+          .join('\n\n'),
+      )
+    }
+
+    return this.path
+  }
+
+  private async captureFrame(options: { required: boolean }) {
+    if (this.stopped && !options.required) {
+      return
+    }
+
+    const framePath = join(
+      this.framesDirectory,
+      `frame-${String(this.frameCount + 1).padStart(6, '0')}.png`,
+    )
+
+    try {
+      await runShellCommand(
+        `peekaboo image ${this.targetFlags} --path ${shellQuote(framePath)} --format png --json`,
+        {
+          cwd: process.cwd(),
+        },
+      )
+      this.frameCount += 1
+    } catch (error) {
+      if (options.required) {
+        throw error
+      }
+    }
   }
 }
 
@@ -847,6 +1008,43 @@ async function findPeekabooWindow(
   app: string,
   windowTitle: string,
 ): Promise<PeekabooWindowInfo | undefined> {
+  const windows = await listPeekabooWindows(app)
+
+  return windows
+    .filter((window: PeekabooWindowInfo) =>
+      window.window_title.includes(windowTitle),
+    )
+    .sort(
+      (left: PeekabooWindowInfo, right: PeekabooWindowInfo) =>
+        right.window_id - left.window_id,
+    )[0]
+}
+
+async function closePeekabooWindows(app: string, windowTitle: string) {
+  const windows = await listPeekabooWindows(app)
+  let closedAny = false
+
+  for (const window of windows) {
+    if (!window.window_title.includes(windowTitle)) {
+      continue
+    }
+
+    closedAny = true
+    await runShellCommand(
+      `peekaboo window close --window-id ${window.window_id}`,
+      {
+        cwd: process.cwd(),
+        timeout: 15_000,
+      },
+    ).catch(() => {})
+  }
+
+  if (closedAny) {
+    await sleep(300)
+  }
+}
+
+async function listPeekabooWindows(app: string): Promise<PeekabooWindowInfo[]> {
   const result = await runShellCommand(
     `peekaboo window list --app ${shellQuote(app)} --json`,
     {
@@ -855,13 +1053,9 @@ async function findPeekabooWindow(
     },
   )
   const payload = JSON.parse(result.stdout)
-  const windows = Array.isArray(payload.data && payload.data.windows)
+  return Array.isArray(payload.data && payload.data.windows)
     ? payload.data.windows
     : []
-
-  return windows.find((window: PeekabooWindowInfo) =>
-    window.window_title.includes(windowTitle),
-  )
 }
 
 async function sleep(ms: number) {
