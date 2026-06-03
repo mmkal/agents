@@ -106,6 +106,7 @@ type OcrMatchResult = {
 
 type PeekabooCommandParent = {
   exec: ComputerExec
+  acceptCurrentMousePosition(): Promise<void>
   guardedAction<T>(
     name: string,
     options: GuardedActionOptions,
@@ -129,6 +130,7 @@ export class PeekabooComputer implements AsyncDisposable, PeekabooCommandParent 
   directory: string
   exec: ComputerExec
   parentDirectory: string
+  private mouseGuard: PeekabooThrowingMouseGuard
 
   static async create(testState: {currentTestName?: string}) {
     const slug = slugify(testState.currentTestName || 'compwright-demo')
@@ -158,6 +160,7 @@ export class PeekabooComputer implements AsyncDisposable, PeekabooCommandParent 
         ? this.directory
         : process.cwd(),
     )
+    this.mouseGuard = new PeekabooThrowingMouseGuard({ exec: this.exec })
   }
 
   async [Symbol.asyncDispose]() {
@@ -169,11 +172,24 @@ export class PeekabooComputer implements AsyncDisposable, PeekabooCommandParent 
   }
 
   async guardedAction<T>(
-    _name: string,
-    _options: GuardedActionOptions,
+    name: string,
+    options: GuardedActionOptions,
     action: () => Promise<T>,
   ) {
-    return await action()
+    await this.mouseGuard.assertStill(`before ${name}`)
+    const result = await action()
+
+    if (options.updatesMousePosition) {
+      await this.mouseGuard.acceptCurrentPosition()
+    } else {
+      await this.mouseGuard.assertStill(`after ${name}`)
+    }
+
+    return result
+  }
+
+  async acceptCurrentMousePosition() {
+    await this.mouseGuard.acceptCurrentPosition()
   }
 
   async open(
@@ -183,52 +199,60 @@ export class PeekabooComputer implements AsyncDisposable, PeekabooCommandParent 
       waitUntilReady: boolean
     },
   ) {
-    const windowTitle = basename(this.directory)
-    const waitFlag = options.waitUntilReady ? '--wait-until-ready' : ''
-    const resolvedTarget = this.resolvePath(target)
-    const previousWindowIds =
-      resolvedTarget === this.directory
-        ? new Set(
-            (await listPeekabooWindows(this, options.app))
-              .filter((window) => window.window_title.includes(windowTitle))
-              .map((window) => window.window_id),
-          )
-        : new Set<number>()
+    return await this.guardedAction('open', { updatesMousePosition: false }, async () => {
+      const windowTitle = basename(this.directory)
+      const waitFlag = options.waitUntilReady ? '--wait-until-ready' : ''
+      const resolvedTarget = this.resolvePath(target)
+      const previousWindowIds =
+        resolvedTarget === this.directory
+          ? new Set(
+              (await listPeekabooWindows(this, options.app))
+                .filter((window) => window.window_title.includes(windowTitle))
+                .map((window) => window.window_id),
+            )
+          : new Set<number>()
 
-    if (resolvedTarget === this.directory) {
-      await closePeekabooWindows(this, options.app, windowTitle)
-    }
+      if (resolvedTarget === this.directory) {
+        await closePeekabooWindows(this, options.app, windowTitle)
+      }
 
-    await this.exec({ timeout: 60_000 })`peekaboo open ${resolvedTarget} --app ${options.app} ${raw(waitFlag)}`
-    const peekabooWindow = await waitForPeekabooWindow(
-      this,
-      options.app,
-      windowTitle,
-      { excludeWindowIds: previousWindowIds },
-    )
+      await this.exec({ timeout: 60_000 })`peekaboo open ${resolvedTarget} --app ${options.app} ${raw(waitFlag)}`
+      const peekabooWindow = await waitForPeekabooWindow(
+        this,
+        options.app,
+        windowTitle,
+        { excludeWindowIds: previousWindowIds },
+      )
 
-    return new PeekabooWindow({
-      assetsDirectory: this.assetsDirectory,
-      clipboardSlot: `demo-helper-${basename(this.directory)}`,
-      directory: this.directory,
-      parent: this,
-      windowBounds: peekabooWindow.bounds,
-      windowId: peekabooWindow.window_id,
+      return new PeekabooWindow({
+        assetsDirectory: this.assetsDirectory,
+        clipboardSlot: `demo-helper-${basename(this.directory)}`,
+        directory: this.directory,
+        parent: this,
+        windowBounds: peekabooWindow.bounds,
+        windowId: peekabooWindow.window_id,
+      })
     })
   }
 
   async permissions() {
-    const result = await this.exec`peekaboo permissions --json`
-    const payload = JSON.parse(result.stdout)
-    const permissions = payload.data.permissions
-    const accessibility = permissions.find(
-      (permission: any) => permission.name === 'Accessibility',
-    )
+    return await this.guardedAction(
+      'permissions',
+      { updatesMousePosition: false },
+      async () => {
+        const result = await this.exec`peekaboo permissions --json`
+        const payload = JSON.parse(result.stdout)
+        const permissions = payload.data.permissions
+        const accessibility = permissions.find(
+          (permission: any) => permission.name === 'Accessibility',
+        )
 
-    return {
-      allPermissions: permissions,
-      permissions: accessibility,
-    }
+        return {
+          allPermissions: permissions,
+          permissions: accessibility,
+        }
+      },
+    )
   }
 
   async readFile(path: string) {
@@ -517,16 +541,21 @@ class PeekabooWindow implements AsyncDisposable, PeekabooOcrParent {
     options: GuardedActionOptions,
     action: () => Promise<T>,
   ) {
-    await this.mouseGuard.beforeAction(name)
+    await this.mouseGuard.assertStill(`before ${name}`)
     const result = await action()
 
     if (options.updatesMousePosition) {
       await this.mouseGuard.acceptCurrentPosition()
     } else {
-      await this.mouseGuard.afterAction(name)
+      await this.mouseGuard.assertStill(`after ${name}`)
     }
 
+    await this.parent.acceptCurrentMousePosition()
     return result
+  }
+
+  async acceptCurrentMousePosition() {
+    await this.mouseGuard.acceptCurrentPosition()
   }
 
   private async captureWindowImage() {
@@ -1143,6 +1172,51 @@ class PeekabooWindowClosedAfterMouseMoveError extends Error {
   }
 }
 
+class PeekabooMouseMovedError extends Error {
+  constructor(event: MouseMovedEvent) {
+    super(
+      [
+        `Mouse moved ${event.location}.`,
+        `Expected ${formatMousePosition(event.expected)} but saw ${formatMousePosition(event.actual)}.`,
+      ].join(' '),
+    )
+    this.name = 'PeekabooMouseMovedError'
+  }
+}
+
+class PeekabooThrowingMouseGuard {
+  private exec: ComputerExec
+  private expectedPosition?: MousePosition
+  private tolerancePixels = 8
+
+  constructor(options: { exec: ComputerExec }) {
+    this.exec = options.exec
+  }
+
+  async acceptCurrentPosition() {
+    this.expectedPosition = await readSystemMousePosition(this.exec)
+  }
+
+  async assertStill(location: string) {
+    const actual = await readSystemMousePosition(this.exec)
+
+    if (!this.expectedPosition) {
+      this.expectedPosition = actual
+      return
+    }
+
+    if (mousePositionsMatch(actual, this.expectedPosition, this.tolerancePixels)) {
+      return
+    }
+
+    throw new PeekabooMouseMovedError({
+      actual,
+      expected: this.expectedPosition,
+      location,
+    })
+  }
+}
+
 class PeekabooMouseGuard {
   private exec: ComputerExec
   private expectedPosition?: MousePosition
@@ -1156,19 +1230,11 @@ class PeekabooMouseGuard {
     this.windowId = options.windowId
   }
 
-  async beforeAction(action: string) {
-    await this.assertMouseStill(`before ${action}`)
-  }
-
-  async afterAction(action: string) {
-    await this.assertMouseStill(`after ${action}`)
-  }
-
   async acceptCurrentPosition() {
     this.expectedPosition = await readSystemMousePosition(this.exec)
   }
 
-  private async assertMouseStill(location: string) {
+  async assertStill(location: string) {
     const actual = await readSystemMousePosition(this.exec)
 
     if (!this.expectedPosition) {
