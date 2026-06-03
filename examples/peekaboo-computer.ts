@@ -1107,6 +1107,25 @@ class PeekabooOcrLocator {
     )
   }
 
+  async highlight() {
+    if (this.options.text.match(/^\w+$/)) {
+      return this.dblclick('center')
+    }
+
+    await this.parent.guardedAction(
+      'ocr.highlight',
+      { updatesMousePosition: true },
+      async () => {
+        const from = await this.screenCoordinates('start')
+        const to = await this.screenCoordinates('end')
+
+        await this.parent.focus()
+        await this.parent.exec`peekaboo drag --from-coords ${coordsString(from)} --to-coords ${coordsString(to)} --duration 100 --steps 5 --profile linear --no-auto-focus`
+        await this.parent.sleep(100)
+      },
+    )
+  }
+
   async dblclick(position: OcrClickPosition = 'center') {
     await this.parent.guardedAction(
       'ocr.dblclick',

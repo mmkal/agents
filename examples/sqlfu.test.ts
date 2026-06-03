@@ -80,13 +80,12 @@ test('sqlfu demo', async () => {
     timeout: 30_000,
   })
 
+  await ide.ocr({ text: 'listPosts: sql' }).highlight();
+  await ide.sleep(600);
+
   await ide.hotkey('ctrl,`')
   await ide.sleep(150)
-  await ide.type('sqlfu --config posts-object.ts generate --watch', {
-    delay: 10,
-    noAutoFocus: true,
-    profile: 'linear',
-  })
+  await ide.type('sqlfu --config posts-object.ts generate --watch')
   await ide.press('return', { noAutoFocus: true })
 
   await computer.waitForFile('posts-object.ts', {
@@ -95,7 +94,7 @@ test('sqlfu demo', async () => {
 
   const fromPosts = ide.ocr({ text: 'from posts' })
   await fromPosts.click('end')
-  await ide.type(' limit :limit', {delay: 10, noAutoFocus: true, profile: 'linear'})
+  await ide.type(' limit :limit')
 
   await ide.hotkey('cmd,s')
 
