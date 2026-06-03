@@ -44,7 +44,8 @@ test('tsc in Cursor', async () => {
 
   await ide.hotkey('cmd,1')
   await ide.click(ide.center())
-  await using video = await ide.startVideo()
+
+  await using _video = await ide.startVideo()
 
   const tsWithBug = dedent`
     const nameArg = process.argv.find((arg) => arg.startsWith('--name='))
@@ -71,16 +72,13 @@ test('tsc in Cursor', async () => {
   expect(await ide.copySelection()).toMatchObject({ new: 'number' })
 
   await ide.type('string', { profile: "linear", delay: 10, noAutoFocus: true })
-  await ide.sleep(300)
   await ide.hotkey('cmd,s')
-  await ide.sleep(300)
 
   expect(await computer.readFile('test.ts')).toContain('const username: string')
 
   await ide.hotkey('ctrl,`')
-  await ide.sleep(250)
+  await ide.sleep(150)
   await ide.type('pnpm build', { profile: "linear", delay: 10, noAutoFocus: true })
-  await ide.sleep(200)
   await ide.press('return', { noAutoFocus: true })
 
   await computer.waitForFile('test.js', { contains: 'Hello' })
