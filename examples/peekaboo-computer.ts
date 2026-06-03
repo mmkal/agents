@@ -91,10 +91,28 @@ type PressOptions = {
 type StepEndedEvent = {
   durationMs: number
   error?: unknown
+  id: number
   title: string
 }
 
 type StepStartedEvent = {
+  id: number
+  title: string
+}
+
+type StepEventSource = {
+  off(event: 'step:end', listener: (event: StepEndedEvent) => void): unknown
+  off(event: 'step:start', listener: (event: StepStartedEvent) => void): unknown
+  on(event: 'step:end', listener: (event: StepEndedEvent) => void): unknown
+  on(event: 'step:start', listener: (event: StepStartedEvent) => void): unknown
+}
+
+type VideoSpan = {
+  end: number
+  start: number
+}
+
+type VideoStepSpan = VideoSpan & {
   title: string
 }
 
@@ -177,6 +195,7 @@ export class PeekabooComputer
   exec: ComputerExec
   parentDirectory: string
   private mouseGuard: PeekabooThrowingMouseGuard
+  private stepId = 0
 
   static async create(testState: {currentTestName?: string}) {
     const slug = slugify(testState.currentTestName || 'compwright-demo')
@@ -229,13 +248,16 @@ export class PeekabooComputer
   }
 
   async step<T>(title: string, action: () => Promise<T>) {
+    const id = this.stepId
+    this.stepId += 1
     const startedAt = performance.now()
-    this.emit('step:start', { title } satisfies StepStartedEvent)
+    this.emit('step:start', { id, title } satisfies StepStartedEvent)
 
     try {
       const result = await action()
       this.emit('step:end', {
         durationMs: Math.round(performance.now() - startedAt),
+        id,
         title,
       } satisfies StepEndedEvent)
       return result
@@ -243,6 +265,7 @@ export class PeekabooComputer
       this.emit('step:end', {
         durationMs: Math.round(performance.now() - startedAt),
         error,
+        id,
         title,
       } satisfies StepEndedEvent)
       throw error
@@ -637,6 +660,7 @@ class PeekabooWindow implements AsyncDisposable, PeekabooOcrParent {
       assetsDirectory: this.assetsDirectory,
       parent: this,
       path: videoPath,
+      stepEvents: isStepEventSource(this.parent) ? this.parent : undefined,
       windowId: this.windowId,
     })
     await video.start()
@@ -763,10 +787,13 @@ class PeekabooWindow implements AsyncDisposable, PeekabooOcrParent {
 
 class PeekabooVideo implements AsyncDisposable {
   path: string
+  private assPath: string
   private assetsDirectory: string
+  private captionedPath: string
   private child?: ReturnType<typeof spawn>
   private deadAirDepth = 0
-  private deadAirSpans: Array<[startMs: number, endMs: number]> = []
+  private deadAirSpans: VideoSpan[] = []
+  private detachStepListeners?: () => void
   private finish?: Promise<void>
   private helperPath: string
   private metaPath: string
@@ -777,18 +804,24 @@ class PeekabooVideo implements AsyncDisposable {
   private sourcePath: string
   private startedAt?: number
   private stderr = ''
+  private stepEvents?: StepEventSource
+  private stepSpans: VideoStepSpan[] = []
+  private stepsInProgress = new Map<number, { start: number; title: string }>()
   private stdout = ''
   private stopped = false
-  private tightenedPath: string
+  private tightPath: string
   private windowId: number
 
   constructor(options: {
     assetsDirectory: string
     parent: PeekabooCommandParent
     path: string
+    stepEvents?: StepEventSource
     windowId: number
   }) {
+    this.assPath = join(options.path, 'steps.ass')
     this.assetsDirectory = options.assetsDirectory
+    this.captionedPath = join(options.path, 'captioned.mp4')
     this.helperPath = join(options.assetsDirectory, 'screen-capture-recorder')
     this.metaPath = join(options.path, 'meta.json')
     this.path = options.path
@@ -798,7 +831,8 @@ class PeekabooVideo implements AsyncDisposable {
       options.assetsDirectory,
       'screen-capture-recorder.swift',
     )
-    this.tightenedPath = join(options.path, 'tightened.mp4')
+    this.stepEvents = options.stepEvents
+    this.tightPath = join(options.path, 'tight.mp4')
     this.windowId = options.windowId
   }
 
@@ -808,6 +842,7 @@ class PeekabooVideo implements AsyncDisposable {
     await this.compileHelper()
     this.startRecorder()
     await this.ready
+    this.attachStepListeners()
   }
 
   async [Symbol.asyncDispose]() {
@@ -835,7 +870,10 @@ class PeekabooVideo implements AsyncDisposable {
     } finally {
       this.deadAirDepth -= 1
       const endMs = performance.now() - this.startedAt
-      this.deadAirSpans.push([Math.round(startMs), Math.round(endMs)])
+      this.deadAirSpans.push({
+        end: Math.round(endMs),
+        start: Math.round(startMs),
+      })
     }
   }
 
@@ -846,6 +884,9 @@ class PeekabooVideo implements AsyncDisposable {
     if (!child || !finish) {
       throw new Error(`Video recorder was not started: ${this.rawPath}`)
     }
+
+    this.detachStepListeners?.()
+    this.finishActiveSteps()
 
     if (!this.stopped && child.exitCode === null && !child.killed) {
       if (!child.stdin) {
@@ -874,9 +915,72 @@ class PeekabooVideo implements AsyncDisposable {
     }
 
     await this.writeMeta()
-    await this.writeTightenedVideo()
+    await this.writeCaptionedVideo()
+    await this.writeTightVideo()
 
     return this.path
+  }
+
+  private attachStepListeners() {
+    if (!this.stepEvents || !this.startedAt) {
+      return
+    }
+
+    const onStart = (event: StepStartedEvent) => {
+      if (!this.startedAt) {
+        return
+      }
+
+      this.stepsInProgress.set(event.id, {
+        start: Math.round(performance.now() - this.startedAt),
+        title: event.title,
+      })
+    }
+
+    const onEnd = (event: StepEndedEvent) => {
+      if (!this.startedAt) {
+        return
+      }
+
+      const started = this.stepsInProgress.get(event.id)
+
+      if (!started) {
+        return
+      }
+
+      this.stepsInProgress.delete(event.id)
+      this.stepSpans.push({
+        end: Math.round(performance.now() - this.startedAt),
+        start: started.start,
+        title: started.title,
+      })
+    }
+
+    this.stepEvents.on('step:start', onStart)
+    this.stepEvents.on('step:end', onEnd)
+    this.detachStepListeners = () => {
+      this.stepEvents?.off('step:start', onStart)
+      this.stepEvents?.off('step:end', onEnd)
+      this.detachStepListeners = undefined
+    }
+  }
+
+  private finishActiveSteps() {
+    if (!this.startedAt) {
+      return
+    }
+
+    const end = Math.round(performance.now() - this.startedAt)
+
+    for (const [, step] of this.stepsInProgress) {
+      this.stepSpans.push({
+        end,
+        start: step.start,
+        title: step.title,
+      })
+    }
+
+    this.stepsInProgress.clear()
   }
 
   private async compileHelper() {
@@ -963,26 +1067,55 @@ class PeekabooVideo implements AsyncDisposable {
   private async writeMeta() {
     await fs.writeFile(
       this.metaPath,
-      `${JSON.stringify({ deadAir: this.deadAirSpans }, null, 2)}\n`,
+      `${JSON.stringify(
+        {
+          deadAir: mergeVideoSpans(this.deadAirSpans),
+          outputs: {
+            captioned: 'captioned.mp4',
+            raw: 'raw.mp4',
+            tight: 'tight.mp4',
+          },
+          schemaVersion: 1,
+          steps: normalizeVideoStepSpans(this.stepSpans),
+          timebase: 'ms',
+        },
+        null,
+        2,
+      )}\n`,
     )
   }
 
-  private async writeTightenedVideo() {
-    const deadAir = mergeDeadAirSpans(this.deadAirSpans)
+  private async writeCaptionedVideo() {
+    await this.writeAssCaptions()
+
+    if (this.stepSpans.length === 0) {
+      await fs.copyFile(this.rawPath, this.captionedPath)
+      return
+    }
+
+    await this.parent.exec({ timeout: 120_000 })`ffmpeg -y -hide_banner -loglevel error -i ${this.rawPath} -vf ${`ass=${escapeFfmpegFilterValue(this.assPath)}`} -an -r 60 ${this.captionedPath}`
+  }
+
+  private async writeAssCaptions() {
+    await fs.writeFile(this.assPath, assCaptionsForSteps(this.stepSpans))
+  }
+
+  private async writeTightVideo() {
+    const deadAir = mergeVideoSpans(this.deadAirSpans)
 
     if (deadAir.length === 0) {
-      await fs.copyFile(this.rawPath, this.tightenedPath)
+      await fs.copyFile(this.captionedPath, this.tightPath)
       return
     }
 
     const selectExpression = `not(${deadAir
       .map(
-        ([startMs, endMs]) =>
-          `between(t,${formatSeconds(startMs)},${formatSeconds(endMs)})`,
+        (span) =>
+          `between(t,${formatSeconds(span.start)},${formatSeconds(span.end)})`,
       )
       .join('+')})`
 
-    await this.parent.exec({ timeout: 30_000 })`ffmpeg -y -hide_banner -loglevel error -i ${this.rawPath} -vf ${`select='${selectExpression}',setpts=N/(60*TB)`} -an -r 60 ${this.tightenedPath}`
+    await this.parent.exec({ timeout: 120_000 })`ffmpeg -y -hide_banner -loglevel error -i ${this.captionedPath} -vf ${`select='${selectExpression}',setpts=N/(60*TB)`} -an -r 60 ${this.tightPath}`
   }
 }
 
@@ -1756,26 +1889,91 @@ function formatSeconds(ms: number) {
   return value || '0'
 }
 
-function mergeDeadAirSpans(
-  spans: Array<[startMs: number, endMs: number]>,
-): Array<[startMs: number, endMs: number]> {
-  const sorted = spans
-    .filter(([startMs, endMs]) => endMs > startMs)
-    .sort(([leftStart], [rightStart]) => leftStart - rightStart)
-  const merged: Array<[startMs: number, endMs: number]> = []
+function assCaptionsForSteps(steps: VideoStepSpan[]) {
+  const events = normalizeVideoStepSpans(steps)
+    .map(
+      (step) =>
+        `Dialogue: 0,${formatAssTime(step.start)},${formatAssTime(step.end)},StepCaption,,0,0,0,,${escapeAssText(step.title)}`,
+    )
+    .join('\n')
 
-  for (const [startMs, endMs] of sorted) {
+  return [
+    '[Script Info]',
+    'ScriptType: v4.00+',
+    'PlayResX: 1920',
+    'PlayResY: 1080',
+    'ScaledBorderAndShadow: yes',
+    'WrapStyle: 0',
+    '',
+    '[V4+ Styles]',
+    'Format: Name, Fontname, Fontsize, PrimaryColour, SecondaryColour, OutlineColour, BackColour, Bold, Italic, Underline, StrikeOut, ScaleX, ScaleY, Spacing, Angle, BorderStyle, Outline, Shadow, Alignment, MarginL, MarginR, MarginV, Encoding',
+    'Style: StepCaption,Arial,42,&H00FFFFFF,&H00FFFFFF,&H00000000,&HA0000000,0,0,0,0,100,100,0,0,3,1,0,2,64,64,56,1',
+    '',
+    '[Events]',
+    'Format: Layer, Start, End, Style, Name, MarginL, MarginR, MarginV, Effect, Text',
+    events,
+    '',
+  ].join('\n')
+}
+
+function escapeAssText(text: string) {
+  return text
+    .replace(/\\/g, '\\\\')
+    .replace(/\{/g, '\\{')
+    .replace(/\}/g, '\\}')
+    .replace(/\r?\n/g, '\\N')
+}
+
+function escapeFfmpegFilterValue(value: string) {
+  return value.replace(/\\/g, '\\\\').replace(/:/g, '\\:').replace(/,/g, '\\,')
+}
+
+function formatAssTime(ms: number) {
+  const totalCentiseconds = Math.max(0, Math.round(ms / 10))
+  const centiseconds = totalCentiseconds % 100
+  const totalSeconds = Math.floor(totalCentiseconds / 100)
+  const seconds = totalSeconds % 60
+  const totalMinutes = Math.floor(totalSeconds / 60)
+  const minutes = totalMinutes % 60
+  const hours = Math.floor(totalMinutes / 60)
+
+  return `${hours}:${String(minutes).padStart(2, '0')}:${String(seconds).padStart(2, '0')}.${String(centiseconds).padStart(2, '0')}`
+}
+
+function isStepEventSource(value: unknown): value is StepEventSource {
+  return (
+    typeof value === 'object' &&
+    value !== null &&
+    typeof (value as any).off === 'function' &&
+    typeof (value as any).on === 'function'
+  )
+}
+
+function mergeVideoSpans(spans: VideoSpan[]): VideoSpan[] {
+  const sorted = spans
+    .filter((span) => span.end > span.start)
+    .sort((left, right) => left.start - right.start)
+  const merged: VideoSpan[] = []
+
+  for (const span of sorted) {
     const previous = merged[merged.length - 1]
 
-    if (!previous || startMs > previous[1]) {
-      merged.push([startMs, endMs])
+    if (!previous || span.start > previous.end) {
+      merged.push({ ...span })
       continue
     }
 
-    previous[1] = Math.max(previous[1], endMs)
+    previous.end = Math.max(previous.end, span.end)
   }
 
   return merged
+}
+
+function normalizeVideoStepSpans(spans: VideoStepSpan[]): VideoStepSpan[] {
+  return spans
+    .filter((span) => span.end > span.start)
+    .sort((left, right) => left.start - right.start)
+    .map((span) => ({ ...span }))
 }
 
 type OcrTextPosition = {
