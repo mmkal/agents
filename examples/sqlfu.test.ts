@@ -7,7 +7,7 @@ const sqlfuPackageRoot = '/Users/mmkal/src/sqlfu/packages/sqlfu'
 test('sqlfu demo', async () => {
   await using computer = await PeekabooComputer.create(expect.getState())
   computer.on('step:start', ({ title }) => {
-    void computer.exec`say ${title}`.catch(() => {})
+    void computer.exec`say ${title.replace('tsc', 'T.S.C')}`
   })
 
   await computer.writeJsonFile('package.json', {
@@ -41,6 +41,7 @@ test('sqlfu demo', async () => {
     'editor.codeActionsOnSave': {},
     'editor.formatOnSave': false,
     'files.autoSave': 'off',
+    "github.copilot.inlineSuggest.enable": false,
     // 'workbench.panel.defaultLocation': 'right',
   })
   await computer.exec({ timeout: 120_000 })`pnpm install ${sqlfuPackageRoot}`
@@ -95,8 +96,7 @@ test('sqlfu demo', async () => {
       contains: /listPosts: sql.many<{.+}>/,
     })
 
-    await ide.ocr('sql.many').click('start')
-    await ide.hotkey('cmd+shift+right', { linger: 1000 })
+    await ide.ocr('sql.many', { until: '>' }).highlight({ linger: 1000 })
   })
 
   await computer.step('update the query - types are updated automatically', async () => {
@@ -108,8 +108,7 @@ test('sqlfu demo', async () => {
       contains: /listPosts: sql.many<{.*limit.*}>/,
     })
 
-    await ide.ocr('sql.many').click('start')
-    await ide.hotkey('cmd+shift+right', { linger: 1000 })
+    await ide.ocr('sql.many', { until: '>' }).highlight({ linger: 1000 })
   })
 
   await computer.step('use the query', async () => {
@@ -121,19 +120,18 @@ test('sqlfu demo', async () => {
 
     const badMethod = dedent`
       async getPosts() {
-        return this.db.listPosts({ limitttt: 10 })
+        return this.db.listPosts({ TYPO: 10 })
       }
     `
-    await ide.type('\n\n' + badMethod, {indent: 2})
+    await ide.type('\n\n' + badMethod, {delay: 15, indent: 2})
     await ide.press('escape')
   })
 
-  await computer.step('fix T.S.C errors - query is strongly-typed', async () => {
-    const limitt = await ide.ocr('limitttt').hover({ linger: 1000 })
-    await limitt.replace('limit')
+  await computer.step('fix tsc errors - query is strongly-typed', async () => {
+    const typo = await ide.ocr('TYPO').hover({ linger: 1000 })
+    await typo.replace('limit')
 
-    await ide.hotkey('cmd,s')
-    await ide.sleep(500)
+    await ide.hotkey('cmd,s', { linger: 500 })
   })
 
   await computer.step('add a migration', async () => {
@@ -144,27 +142,26 @@ test('sqlfu demo', async () => {
     await ide.hotkey('ctrl,c')
 
     await ide.type(`sqlfu --config posts-object.ts draft\n`)
+    
     await ide.sleep(500)
     await ide.press('return')
-
-    await ide.sleep(500)
+    
+    await ide.ocr('name:').highlight({linger: 500})
+    await ide.hotkey('cmd+option+[') // collapse the migration block
   })
-
+  
   await computer.step('edit definitions and add another migration', async () => {
-    await ide
-      .ocr('body text', { before: 'migrations:' })
-      .append(',\n        published_at date')
+    const postsTableLastColumn = ide.ocr('body text', { before: 'migrations:' })
+    await postsTableLastColumn.append(',\n        published_at text')
     await ide.hotkey('cmd,s')
 
     await ide.hotkey('ctrl,`')
     await ide.type(`sqlfu --config posts-object.ts draft\n`)
     await ide.sleep(500)
     await ide.press('return')
-    await ide.hotkey('cmd,1')
-    await ide.scroll('down 160px')
+    await computer.waitForFile('posts-object.ts', { contains: 'alter table' })
 
-    await ide.ocr('alter table', {before: 'queries'}).click('start');
-    await ide.hotkey('cmd+shift+right', { linger: 1000 })
+    await ide.ocr('alter table', {until: 'published_at text', before: 'Terminal'}).highlight({ linger: 1000 })
   })
 
   await video.save()
@@ -190,7 +187,7 @@ const postsObjectSource = dedent`
       },
     });
 
-    db: ReturnType<typeof PostsObject.dbConfig<ReturnType<typeof createDurableObjectClient>>>;
+    db: typeof PostsObject.dbConfig.$type;
 
     constructor(ctx: any) {
       this.db = PostsObject.dbConfig(createDurableObjectClient(ctx.storage));

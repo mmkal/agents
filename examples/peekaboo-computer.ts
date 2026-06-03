@@ -57,6 +57,7 @@ type MouseMovedEvent = {
 type OcrOptions = {
   after?: string
   before?: string
+  until?: string
 }
 
 type OcrMatchOptions = OcrOptions & {
@@ -198,6 +199,20 @@ type OcrMatchResult = {
   windowBounds: PeekabooBounds
 }
 
+type OcrTextOccurrence = {
+  boundingBox: {
+    height: number
+    width: number
+    x: number
+    y: number
+  }
+  characterOffset: number
+  confidence: number
+  lineIndex: number
+  lineText: string
+  text: string
+}
+
 type PeekabooCommandParent = {
   exec: ComputerExec
   acceptCurrentMousePosition(): Promise<void>
@@ -212,6 +227,10 @@ type PeekabooCommandParent = {
 
 type PeekabooLocatorParent = PeekabooCommandParent & {
   focus(): Promise<void>
+  recordAutozoomBounds(
+    trigger: Extract<AutozoomTrigger, 'click' | 'hover'>,
+    bounds: ScreenBounds | WindowBounds,
+  ): void
   recordAutozoomPoint(
     trigger: Extract<AutozoomTrigger, 'click' | 'hover'>,
     coords: ScreenCoordinates | WindowCoordinates,
@@ -626,23 +645,31 @@ class PeekabooWindow implements AsyncDisposable, PeekabooOcrParent {
     options: OcrMatchOptions,
   ): Promise<OcrMatchResult> {
     const scriptPath = await this.visionOcrScriptPath()
-    const result = await this.exec`swift ${scriptPath} ${imagePath} ${options.text}`
+    const result = await this.exec`swift ${scriptPath} ${imagePath} ${options.text} ${options.until || ''} ${options.after || ''} ${options.before || ''}`
     const payload = JSON.parse(result.stdout)
     const recognizedText = Array.isArray(payload.recognizedText)
       ? payload.recognizedText
       : []
-    const matches = filterOcrMatches({
+    const textPositions = Array.isArray(payload.textPositions)
+      ? payload.textPositions
+      : []
+    let matches = filterOcrMatches({
       after: options.after,
       before: options.before,
       matches: Array.isArray(payload.matches) ? payload.matches : [],
-      recognizedText,
-      text: options.text,
+      textPositions,
+    })
+    matches = extendOcrMatchesUntil({
+      matches,
+      textPositions,
+      until: options.until,
     })
 
     if (matches.length === 0) {
       throw new Error(
         [
           ocrMatchFailureMessage('OCR text not found', options),
+          `OCR screenshot: ${imagePath}`,
           `Recognized text:`,
           ...recognizedText.map((text: string) => `- ${text}`),
         ].join('\n'),
@@ -656,6 +683,7 @@ class PeekabooWindow implements AsyncDisposable, PeekabooOcrParent {
             `OCR text matched ${matches.length} times`,
             options,
           ),
+          `OCR screenshot: ${imagePath}`,
           ...matches.map(
             (match: any) =>
               `- ${match.lineText} (${JSON.stringify(match.boundingBox)})`,
@@ -832,6 +860,24 @@ class PeekabooWindow implements AsyncDisposable, PeekabooOcrParent {
     this.video.recordAutozoom(
       trigger,
       zoomBoundsAroundWindowPoint(windowCoords, this.windowBounds),
+    )
+  }
+
+  recordAutozoomBounds(
+    trigger: Extract<AutozoomTrigger, 'click' | 'hover'>,
+    bounds: ScreenBounds | WindowBounds,
+  ) {
+    if (!this.video?.autozoomEnabled(trigger)) {
+      return
+    }
+
+    const windowTextBounds = bounds.relativeTo === 'screen'
+      ? windowBoundsForScreenBounds(bounds, this.windowBounds)
+      : bounds
+
+    this.video.recordAutozoom(
+      trigger,
+      expandWindowBounds(windowTextBounds, 72, this.windowBounds),
     )
   }
 
@@ -1632,7 +1678,7 @@ class PeekabooOcrLocator {
   }
 
   async highlight({linger = 0} = {}) {
-    if (this.text.match(/^\w+$/)) {
+    if (!this.options.until && this.text.match(/^\w+$/)) {
       return this.dblclick('center')
     }
 
@@ -1640,11 +1686,13 @@ class PeekabooOcrLocator {
       'ocr.highlight',
       { updatesMousePosition: true },
       async () => {
-        const from = await this.screenCoordinates('start')
-        const to = await this.screenCoordinates('end')
+        const bounds = await this.screenBounds()
+        const from = screenCoordinatesForOcrPosition(bounds, 'start')
+        const to = screenCoordinatesForOcrPosition(bounds, 'end')
 
         await this.parent.focus()
         await this.parent.exec`peekaboo drag --from-coords ${coordsString(from)} --to-coords ${coordsString(to)} --duration 100 --steps 5 --profile linear --no-auto-focus`
+        this.parent.recordAutozoomBounds('click', bounds)
         await this.parent.sleep(linger)
       },
     )
@@ -1818,7 +1866,12 @@ class PeekabooOcrLocator {
     this.match =
       this.match ||
       this.parent.deadAir(() =>
-        this.parent.findOcrMatch({ ...this.options, text: this.text }),
+        this.parent.findOcrMatch({ ...this.options, text: this.text }).catch(e => {
+          if (String(e).includes('OCR text not found')) {
+            return this.parent.findOcrMatch({ ...this.options, text: this.text }) // try one more time
+          }
+          throw e;
+        }),
       )
     return this.match
   }
@@ -2502,36 +2555,30 @@ function autozoomWordProbes(words: string[]): OcrMatchOptions[] {
   return probes
 }
 
-type OcrTextPosition = {
-  characterOffset: number
-  lineIndex: number
-}
-
 function filterOcrMatches(options: {
   after?: string
   before?: string
-  matches: any[]
-  recognizedText: string[]
-  text: string
+  matches: OcrTextOccurrence[]
+  textPositions: OcrTextOccurrence[]
 }) {
   let matches = options.matches
 
   if (options.after) {
-    const anchors = ocrTextPositions(options.recognizedText, options.after)
+    const anchors = ocrTextOccurrences(options.textPositions, options.after)
     matches = matches.filter((match) =>
       anchors.some(
         (anchor) =>
-          compareOcrTextPositions(ocrMatchPosition(match), anchor) > 0,
+          compareOcrVisualTextPositions(match, anchor) > 0,
       ),
     )
   }
 
   if (options.before) {
-    const anchors = ocrTextPositions(options.recognizedText, options.before)
+    const anchors = ocrTextOccurrences(options.textPositions, options.before)
     matches = matches.filter((match) =>
       anchors.some(
         (anchor) =>
-          compareOcrTextPositions(ocrMatchPosition(match), anchor) < 0,
+          compareOcrVisualTextPositions(match, anchor) < 0,
       ),
     )
   }
@@ -2539,53 +2586,86 @@ function filterOcrMatches(options: {
   return matches
 }
 
+function extendOcrMatchesUntil(options: {
+  matches: OcrTextOccurrence[]
+  textPositions: OcrTextOccurrence[]
+  until?: string
+}) {
+  if (!options.until) {
+    return options.matches
+  }
+
+  const anchors = ocrTextOccurrences(options.textPositions, options.until)
+
+  return options.matches.map((match) => {
+    const anchor = anchors
+      .filter((candidate) => compareOcrVisualTextPositions(candidate, match) > 0)
+      .sort(compareOcrVisualTextPositions)[0]
+
+    if (!anchor) {
+      return match
+    }
+
+    return {
+      ...match,
+      boundingBox: unionVisionBoxes(match.boundingBox, anchor.boundingBox),
+    }
+  })
+}
+
 function ocrMatchFailureMessage(prefix: string, options: OcrMatchOptions) {
   return [
     `${prefix}: ${options.text}`,
     options.after ? `after ${JSON.stringify(options.after)}` : '',
     options.before ? `before ${JSON.stringify(options.before)}` : '',
+    options.until ? `until ${JSON.stringify(options.until)}` : '',
   ]
     .filter(Boolean)
     .join(' ')
 }
 
-function ocrMatchPosition(match: any): OcrTextPosition {
-  return {
-    characterOffset: Number(match.characterOffset) || 0,
-    lineIndex: Number(match.lineIndex) || 0,
-  }
-}
-
-function ocrTextPositions(
-  recognizedText: string[],
+function ocrTextOccurrences(
+  occurrences: OcrTextOccurrence[],
   text: string,
-): OcrTextPosition[] {
-  const positions: OcrTextPosition[] = []
+): OcrTextOccurrence[] {
   const needle = text.toLowerCase()
-
-  for (let lineIndex = 0; lineIndex < recognizedText.length; lineIndex += 1) {
-    const lineText = recognizedText[lineIndex]
-    const haystack = lineText.toLowerCase()
-    let characterOffset = haystack.indexOf(needle)
-
-    while (characterOffset >= 0) {
-      positions.push({ characterOffset, lineIndex })
-      characterOffset = haystack.indexOf(needle, characterOffset + text.length)
-    }
-  }
-
-  return positions
+  return occurrences.filter(
+    (occurrence) => occurrence.text.toLowerCase() === needle,
+  )
 }
 
-function compareOcrTextPositions(
-  left: OcrTextPosition,
-  right: OcrTextPosition,
+function compareOcrVisualTextPositions(
+  left: OcrTextOccurrence,
+  right: OcrTextOccurrence,
 ) {
-  if (left.lineIndex !== right.lineIndex) {
-    return left.lineIndex - right.lineIndex
+  const leftBox = left.boundingBox
+  const rightBox = right.boundingBox
+  const leftY = 1 - leftBox.y - leftBox.height / 2
+  const rightY = 1 - rightBox.y - rightBox.height / 2
+  const sameLineTolerance = Math.max(leftBox.height, rightBox.height) * 0.8
+
+  if (Math.abs(leftY - rightY) > sameLineTolerance) {
+    return leftY - rightY
   }
 
-  return left.characterOffset - right.characterOffset
+  return leftBox.x - rightBox.x
+}
+
+function unionVisionBoxes(
+  left: OcrTextOccurrence['boundingBox'],
+  right: OcrTextOccurrence['boundingBox'],
+) {
+  const minX = Math.min(left.x, right.x)
+  const minY = Math.min(left.y, right.y)
+  const maxX = Math.max(left.x + left.width, right.x + right.width)
+  const maxY = Math.max(left.y + left.height, right.y + right.height)
+
+  return {
+    height: maxY - minY,
+    width: maxX - minX,
+    x: minX,
+    y: minY,
+  }
 }
 
 function centerOfScreenBounds(bounds: ScreenBounds): ScreenCoordinates {
@@ -2885,10 +2965,14 @@ struct Payload: Encodable {
   let image: ImageInfo
   let matches: [TextMatch]
   let recognizedText: [String]
+  let textPositions: [TextMatch]
 }
 
 let imagePath = CommandLine.arguments[1]
 let targetText = CommandLine.arguments[2]
+let untilText = CommandLine.arguments.count > 3 ? CommandLine.arguments[3] : ""
+let afterText = CommandLine.arguments.count > 4 ? CommandLine.arguments[4] : ""
+let beforeText = CommandLine.arguments.count > 5 ? CommandLine.arguments[5] : ""
 let imageURL = URL(fileURLWithPath: imagePath)
 
 guard let image = NSImage(contentsOf: imageURL) else {
@@ -2918,20 +3002,39 @@ if let requestError {
 
 var matches: [TextMatch] = []
 var recognizedText: [String] = []
+var textPositions: [TextMatch] = []
 
-for (lineIndex, observation) in observations.enumerated() {
-  guard let candidate = observation.topCandidates(1).first else {
-    continue
+func appendTextMatches(
+  to output: inout [TextMatch],
+  text searchText: String,
+  lineIndex: Int,
+  candidate: VNRecognizedText,
+  lineText: String,
+  until searchUntilText: String = ""
+) {
+  if searchText.isEmpty {
+    return
   }
 
-  let lineText = candidate.string
-  recognizedText.append(lineText)
-
   var searchRange = lineText.startIndex..<lineText.endIndex
-  while let range = lineText.range(of: targetText, options: [.caseInsensitive], range: searchRange) {
-    if let textBox = try? candidate.boundingBox(for: range) {
+  while let range = lineText.range(of: searchText, options: [.caseInsensitive], range: searchRange) {
+    let boxRange: Range<String.Index>
+
+    if searchUntilText.isEmpty {
+      boxRange = range
+    } else if let untilRange = lineText.range(
+      of: searchUntilText,
+      options: [.caseInsensitive],
+      range: range.upperBound..<lineText.endIndex
+    ) {
+      boxRange = range.lowerBound..<untilRange.upperBound
+    } else {
+      boxRange = range
+    }
+
+    if let textBox = try? candidate.boundingBox(for: boxRange) {
       let box = textBox.boundingBox
-      matches.append(TextMatch(
+      output.append(TextMatch(
         boundingBox: Rect(
           height: box.height,
           width: box.width,
@@ -2942,7 +3045,7 @@ for (lineIndex, observation) in observations.enumerated() {
         confidence: candidate.confidence,
         lineIndex: lineIndex,
         lineText: lineText,
-        text: targetText
+        text: searchText
       ))
     }
 
@@ -2953,10 +3056,39 @@ for (lineIndex, observation) in observations.enumerated() {
   }
 }
 
+for (lineIndex, observation) in observations.enumerated() {
+  guard let candidate = observation.topCandidates(1).first else {
+    continue
+  }
+
+  let lineText = candidate.string
+  recognizedText.append(lineText)
+
+  appendTextMatches(
+    to: &matches,
+    text: targetText,
+    lineIndex: lineIndex,
+    candidate: candidate,
+    lineText: lineText,
+    until: untilText
+  )
+
+  for searchText in Set([targetText, untilText, afterText, beforeText]) {
+    appendTextMatches(
+      to: &textPositions,
+      text: searchText,
+      lineIndex: lineIndex,
+      candidate: candidate,
+      lineText: lineText
+    )
+  }
+}
+
 let payload = Payload(
   image: ImageInfo(height: cgImage.height, width: cgImage.width),
   matches: matches,
-  recognizedText: recognizedText
+  recognizedText: recognizedText,
+  textPositions: textPositions
 )
 let encoder = JSONEncoder()
 encoder.outputFormatting = [.sortedKeys]
