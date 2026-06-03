@@ -121,12 +121,28 @@ test('sqlfu demo', async () => {
   await ide.sleep(1000);
   await limitt.dblclick();
 
-  await ide.type('limit', {delay: 10, noAutoFocus: true, profile: 'linear'})
+  await ide.type('limit')
 
   await ide.hotkey('cmd,s')
 
   await ide.sleep(500)
 
+  await ide.hotkey('cmd,up')
+  await ide.press('escape')
+  const migrationsText = ide.ocr({ text: 'migrations:'})
+  await migrationsText.dblclick();
+  await ide.sleep(600);
+
+  await ide.hotkey('ctrl,`')
+  await ide.hotkey('ctrl,c')
+
+  await ide.type(`sqlfu --config posts-object.ts draft`)
+  await ide.press('return')
+
+  await ide.sleep(500)
+  await ide.press('return')
+
+  await ide.sleep(500)
   await video.save()
 }, 240_000)
 
