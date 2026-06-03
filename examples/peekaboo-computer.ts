@@ -53,7 +53,10 @@ type MouseMovedEvent = {
   location: string
 }
 
-type OcrOptions = {}
+type OcrOptions = {
+  after?: string
+  before?: string
+}
 
 type OcrMatchOptions = OcrOptions & {
   text: string
@@ -71,6 +74,17 @@ type ScrollOptions = {
 
 type SleepOptions = {
   deadAir?: boolean
+}
+
+type TypeOptions = {
+  delay?: number
+  indent?: number | string
+  noAutoFocus?: boolean
+  profile?: 'linear'
+}
+
+type PressOptions = {
+  noAutoFocus?: boolean
 }
 
 type PeekabooBounds = {
@@ -139,6 +153,8 @@ type PeekabooLocatorParent = PeekabooCommandParent & {
 type PeekabooOcrParent = PeekabooLocatorParent & {
   deadAir<T>(action: () => Promise<T>): Promise<T>
   findOcrMatch(options: OcrMatchOptions): Promise<OcrMatchResult>
+  press(keys: string, options?: PressOptions): Promise<void>
+  type(text: string, options?: TypeOptions): Promise<void>
 }
 
 export class PeekabooComputer implements AsyncDisposable, PeekabooCommandParent {
@@ -426,11 +442,14 @@ class PeekabooWindow implements AsyncDisposable, PeekabooOcrParent {
         await this.exec`peekaboo hotkey ${keys} ${raw(targetFlags)} ${raw(
           options.noAutoFocus ? '--no-auto-focus' : '',
         )}`
+        if (keys.startsWith('cmd,')) {
+          await this.press('escape') // not sure if this is a peekaboo bug or me being dumb, but without this cmd stays "down" after the hotkey is pressed
+        }
       },
     )
   }
 
-  async press(keys: string, options: { noAutoFocus?: boolean } = {}) {
+  async press(keys: string, options: PressOptions = {}) {
     const targetFlags = options.noAutoFocus ? '' : this.targetFlags()
 
     await this.guardedAction(
@@ -471,6 +490,7 @@ class PeekabooWindow implements AsyncDisposable, PeekabooOcrParent {
 
   ocr(text: string, options: OcrOptions = {}) {
     return new PeekabooOcrLocator({
+      options,
       parent: this,
       text,
     })
@@ -481,14 +501,23 @@ class PeekabooWindow implements AsyncDisposable, PeekabooOcrParent {
     const scriptPath = await this.visionOcrScriptPath()
     const result = await this.exec`swift ${scriptPath} ${imagePath} ${options.text}`
     const payload = JSON.parse(result.stdout)
-    const matches = Array.isArray(payload.matches) ? payload.matches : []
+    const recognizedText = Array.isArray(payload.recognizedText)
+      ? payload.recognizedText
+      : []
+    const matches = filterOcrMatches({
+      after: options.after,
+      before: options.before,
+      matches: Array.isArray(payload.matches) ? payload.matches : [],
+      recognizedText,
+      text: options.text,
+    })
 
     if (matches.length === 0) {
       throw new Error(
         [
-          `OCR text not found: ${options.text}`,
+          ocrMatchFailureMessage('OCR text not found', options),
           `Recognized text:`,
-          ...(payload.recognizedText || []).map((text: string) => `- ${text}`),
+          ...recognizedText.map((text: string) => `- ${text}`),
         ].join('\n'),
       )
     }
@@ -496,7 +525,10 @@ class PeekabooWindow implements AsyncDisposable, PeekabooOcrParent {
     if (matches.length > 1) {
       throw new Error(
         [
-          `OCR text matched ${matches.length} times: ${options.text}`,
+          ocrMatchFailureMessage(
+            `OCR text matched ${matches.length} times`,
+            options,
+          ),
           ...matches.map(
             (match: any) =>
               `- ${match.lineText} (${JSON.stringify(match.boundingBox)})`,
@@ -511,7 +543,7 @@ class PeekabooWindow implements AsyncDisposable, PeekabooOcrParent {
         path: imagePath,
       },
       match: matches[0],
-      recognizedText: payload.recognizedText || [],
+      recognizedText,
       screenBounds: screenBoundsForVisionBox({
         image: payload.image,
         visionBox: matches[0].boundingBox,
@@ -566,12 +598,7 @@ class PeekabooWindow implements AsyncDisposable, PeekabooOcrParent {
 
   async type(
     text: string,
-    opts?: {
-      indent?: number | string
-      delay?: number
-      noAutoFocus?: boolean
-      profile?: 'linear'
-    },
+    opts?: TypeOptions,
   ) {
     const options = {
       ...opts,
@@ -1088,10 +1115,16 @@ class PeekabooLocator {
 
 class PeekabooOcrLocator {
   private match?: Promise<OcrMatchResult>
+  private options: OcrOptions
   private parent: PeekabooOcrParent
   private text: string
 
-  constructor(options: { parent: PeekabooOcrParent; text: string }) {
+  constructor(options: {
+    options: OcrOptions
+    parent: PeekabooOcrParent
+    text: string
+  }) {
+    this.options = options.options
     this.parent = options.parent
     this.text = options.text
   }
@@ -1109,7 +1142,7 @@ class PeekabooOcrLocator {
     )
   }
 
-  async highlight() {
+  async highlight({linger = 0} = {}) {
     if (this.text.match(/^\w+$/)) {
       return this.dblclick('center')
     }
@@ -1123,9 +1156,29 @@ class PeekabooOcrLocator {
 
         await this.parent.focus()
         await this.parent.exec`peekaboo drag --from-coords ${coordsString(from)} --to-coords ${coordsString(to)} --duration 100 --steps 5 --profile linear --no-auto-focus`
-        await this.parent.sleep(100)
+        await this.parent.sleep(linger)
       },
     )
+  }
+
+  async append(text: string, options?: TypeOptions) {
+    await this.click('end')
+    await this.parent.type(text, options)
+  }
+
+  async prepend(text: string, options?: TypeOptions) {
+    await this.click('start')
+    await this.parent.type(text, options)
+  }
+
+  async replace(text: string, options?: TypeOptions) {
+    await this.highlight()
+    await this.parent.type(text, options)
+  }
+
+  async delete() {
+    await this.highlight()
+    await this.parent.press('delete')
   }
 
   async dblclick(position: OcrClickPosition = 'center') {
@@ -1142,15 +1195,16 @@ class PeekabooOcrLocator {
     )
   }
 
-  async hover() {
-    await this.parent.guardedAction(
+  async hover({ linger = 100 } = {}) {
+    return this.parent.guardedAction(
       'ocr.hover',
       { updatesMousePosition: true },
       async () => {
         const coords = await this.screenCoordinates()
 
         await this.parent.exec`peekaboo move --coords ${coordsString(coords)} ${raw(this.parent.targetFlags())} --duration 150 --steps 5 --profile linear`
-        await this.parent.sleep(100)
+        await this.parent.sleep(linger)
+        return this
       },
     )
   }
@@ -1272,7 +1326,9 @@ class PeekabooOcrLocator {
   private resolve() {
     this.match =
       this.match ||
-      this.parent.deadAir(() => this.parent.findOcrMatch({ text: this.text }))
+      this.parent.deadAir(() =>
+        this.parent.findOcrMatch({ ...this.options, text: this.text }),
+      )
     return this.match
   }
 }
@@ -1666,6 +1722,90 @@ function mergeDeadAirSpans(
   return merged
 }
 
+type OcrTextPosition = {
+  characterOffset: number
+  lineIndex: number
+}
+
+function filterOcrMatches(options: {
+  after?: string
+  before?: string
+  matches: any[]
+  recognizedText: string[]
+  text: string
+}) {
+  let matches = options.matches
+
+  if (options.after) {
+    const anchors = ocrTextPositions(options.recognizedText, options.after)
+    matches = matches.filter((match) =>
+      anchors.some(
+        (anchor) =>
+          compareOcrTextPositions(ocrMatchPosition(match), anchor) > 0,
+      ),
+    )
+  }
+
+  if (options.before) {
+    const anchors = ocrTextPositions(options.recognizedText, options.before)
+    matches = matches.filter((match) =>
+      anchors.some(
+        (anchor) =>
+          compareOcrTextPositions(ocrMatchPosition(match), anchor) < 0,
+      ),
+    )
+  }
+
+  return matches
+}
+
+function ocrMatchFailureMessage(prefix: string, options: OcrMatchOptions) {
+  return [
+    `${prefix}: ${options.text}`,
+    options.after ? `after ${JSON.stringify(options.after)}` : '',
+    options.before ? `before ${JSON.stringify(options.before)}` : '',
+  ]
+    .filter(Boolean)
+    .join(' ')
+}
+
+function ocrMatchPosition(match: any): OcrTextPosition {
+  return {
+    characterOffset: Number(match.characterOffset) || 0,
+    lineIndex: Number(match.lineIndex) || 0,
+  }
+}
+
+function ocrTextPositions(
+  recognizedText: string[],
+  text: string,
+): OcrTextPosition[] {
+  const positions: OcrTextPosition[] = []
+
+  for (let lineIndex = 0; lineIndex < recognizedText.length; lineIndex += 1) {
+    const lineText = recognizedText[lineIndex]
+    let characterOffset = lineText.indexOf(text)
+
+    while (characterOffset >= 0) {
+      positions.push({ characterOffset, lineIndex })
+      characterOffset = lineText.indexOf(text, characterOffset + text.length)
+    }
+  }
+
+  return positions
+}
+
+function compareOcrTextPositions(
+  left: OcrTextPosition,
+  right: OcrTextPosition,
+) {
+  if (left.lineIndex !== right.lineIndex) {
+    return left.lineIndex - right.lineIndex
+  }
+
+  return left.characterOffset - right.characterOffset
+}
+
 function centerOfScreenBounds(bounds: ScreenBounds): ScreenCoordinates {
   return {
     relativeTo: 'screen',
@@ -1784,7 +1924,9 @@ struct Rect: Encodable {
 
 struct TextMatch: Encodable {
   let boundingBox: Rect
+  let characterOffset: Int
   let confidence: Float
+  let lineIndex: Int
   let lineText: String
   let text: String
 }
@@ -1827,7 +1969,7 @@ if let requestError {
 var matches: [TextMatch] = []
 var recognizedText: [String] = []
 
-for observation in observations {
+for (lineIndex, observation) in observations.enumerated() {
   guard let candidate = observation.topCandidates(1).first else {
     continue
   }
@@ -1846,7 +1988,9 @@ for observation in observations {
           x: box.origin.x,
           y: box.origin.y
         ),
+        characterOffset: lineText.distance(from: lineText.startIndex, to: range.lowerBound),
         confidence: candidate.confidence,
+        lineIndex: lineIndex,
         lineText: lineText,
         text: targetText
       ))

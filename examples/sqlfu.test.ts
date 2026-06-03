@@ -30,6 +30,8 @@ test('sqlfu demo', async () => {
     'terminal.integrated.env.osx': {
       PATH: '${workspaceFolder}/node_modules/.bin:${env:PATH}',
     },
+    "cursor.cpp.disableAutoComplete": true,
+    "editor.inlineSuggest.enabled": false,
     'editor.autoClosingBrackets': 'never',
     'editor.autoClosingQuotes': 'never',
     'editor.autoIndent': 'none',
@@ -92,9 +94,7 @@ test('sqlfu demo', async () => {
     contains: /listPosts: sql.many<{.+}>/,
   })
 
-  const fromPosts = ide.ocr('from posts')
-  await fromPosts.click('end')
-  await ide.type(' limit :limit')
+  await ide.ocr('from posts').append(' limit :limit')
 
   await ide.hotkey('cmd,s')
 
@@ -116,33 +116,34 @@ test('sqlfu demo', async () => {
   await ide.type('\n\n' + badMethod, {indent: 2})
   await ide.press('escape')
 
-  const limitt = ide.ocr('limitt')
-  await limitt.hover();
-  await ide.sleep(1000);
-  await limitt.dblclick();
-
-  await ide.type('limit')
+  const limitt = await ide.ocr('limitt').hover({ linger: 1000 })
+  await limitt.replace('limit')
 
   await ide.hotkey('cmd,s')
-
   await ide.sleep(500)
 
-  await ide.hotkey('cmd,up')
-  await ide.press('escape')
-  const migrationsText = ide.ocr('migrations:')
-  await migrationsText.dblclick();
-  await ide.sleep(600);
+  await ide.hotkey('cmd,up') // jump to top
+  await ide.ocr('migrations').highlight({ linger: 600 });
 
   await ide.hotkey('ctrl,`')
   await ide.hotkey('ctrl,c')
 
-  await ide.type(`sqlfu --config posts-object.ts draft`)
-  await ide.press('return')
-
+  await ide.type(`sqlfu --config posts-object.ts draft\n`)
   await ide.sleep(500)
   await ide.press('return')
 
   await ide.sleep(500)
+
+  await ide
+    .ocr('body text', { before: 'migrations:' })
+    .append(',\n        published_at date')
+  await ide.hotkey('cmd,s')
+
+  await ide.hotkey('ctrl,`')
+  await ide.type(`sqlfu --config posts-object.ts draft\n`)
+  await ide.sleep(500)
+  await ide.press('return')
+
   await video.save()
 }, 240_000)
 
