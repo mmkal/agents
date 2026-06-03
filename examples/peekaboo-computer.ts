@@ -802,6 +802,7 @@ class PeekabooVideo implements AsyncDisposable {
   private rawPath: string
   private saved?: Promise<string>
   private sourcePath: string
+  private soundtrackPath?: string
   private startedAt?: number
   private stderr = ''
   private stepEvents?: StepEventSource
@@ -855,6 +856,15 @@ class PeekabooVideo implements AsyncDisposable {
     const path = await this.saved
     console.log(`Video assets: ${path}`)
     return path
+  }
+
+  addSoundtrack(path: string) {
+    if (this.saved) {
+      throw new Error(`Cannot add soundtrack after video save has started: ${this.path}`)
+    }
+
+    this.soundtrackPath = path
+    return this
   }
 
   async deadAir<T>(action: () => Promise<T>) {
@@ -1076,6 +1086,9 @@ class PeekabooVideo implements AsyncDisposable {
             tight: 'tight.mp4',
           },
           schemaVersion: 1,
+          soundtrack: this.soundtrackPath
+            ? { source: this.soundtrackPath }
+            : undefined,
           steps: normalizeVideoStepSpans(this.stepSpans),
           timebase: 'ms',
         },
@@ -1088,12 +1101,13 @@ class PeekabooVideo implements AsyncDisposable {
   private async writeCaptionedVideo() {
     await this.writeAssCaptions()
 
-    if (this.stepSpans.length === 0) {
-      await fs.copyFile(this.rawPath, this.captionedPath)
-      return
-    }
-
-    await this.parent.exec({ timeout: 120_000 })`ffmpeg -y -hide_banner -loglevel error -i ${this.rawPath} -vf ${`ass=${escapeFfmpegFilterValue(this.assPath)}`} -an -r 60 ${this.captionedPath}`
+    await this.writeVideo({
+      filter: this.stepSpans.length === 0
+        ? undefined
+        : `ass=${escapeFfmpegFilterValue(this.assPath)}`,
+      inputPath: this.rawPath,
+      outputPath: this.captionedPath,
+    })
   }
 
   private async writeAssCaptions() {
@@ -1115,7 +1129,34 @@ class PeekabooVideo implements AsyncDisposable {
       )
       .join('+')})`
 
-    await this.parent.exec({ timeout: 120_000 })`ffmpeg -y -hide_banner -loglevel error -i ${this.captionedPath} -vf ${`select='${selectExpression}',setpts=N/(60*TB)`} -an -r 60 ${this.tightPath}`
+    await this.writeVideo({
+      filter: `select='${selectExpression}',setpts=N/(60*TB)`,
+      inputPath: this.captionedPath,
+      outputPath: this.tightPath,
+    })
+  }
+
+  private async writeVideo(options: {
+    filter?: string
+    inputPath: string
+    outputPath: string
+  }) {
+    if (this.soundtrackPath && options.filter) {
+      await this.parent.exec({ timeout: 120_000 })`ffmpeg -y -hide_banner -loglevel error -i ${options.inputPath} -stream_loop -1 -i ${this.soundtrackPath} -vf ${options.filter} -map 0:v:0 -map 1:a:0 -c:a aac -shortest -r 60 ${options.outputPath}`
+      return
+    }
+
+    if (this.soundtrackPath) {
+      await this.parent.exec({ timeout: 120_000 })`ffmpeg -y -hide_banner -loglevel error -i ${options.inputPath} -stream_loop -1 -i ${this.soundtrackPath} -map 0:v:0 -map 1:a:0 -c:v copy -c:a aac -shortest ${options.outputPath}`
+      return
+    }
+
+    if (options.filter) {
+      await this.parent.exec({ timeout: 120_000 })`ffmpeg -y -hide_banner -loglevel error -i ${options.inputPath} -vf ${options.filter} -an -r 60 ${options.outputPath}`
+      return
+    }
+
+    await fs.copyFile(options.inputPath, options.outputPath)
   }
 }
 

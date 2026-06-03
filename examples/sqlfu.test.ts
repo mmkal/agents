@@ -79,6 +79,7 @@ test('sqlfu demo', async () => {
   })
 
   await using video = await ide.startVideo()
+  video.addSoundtrack(process.cwd() + "/assets.ignoreme/dream-baby-dream.mp3")
 
   await computer.step('generate query types', async () => {
     await ide.ocr('listPosts: sql').highlight();
