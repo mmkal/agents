@@ -139,6 +139,18 @@ type VideoZoomSpan = VideoSpan & {
 
 type VideoZoomEvent = Omit<VideoZoomSpan, 'end'>
 
+type AutozoomCamera = {
+  height: number
+  width: number
+  x: number
+  y: number
+}
+
+type AutozoomCameraSegment = VideoSpan & {
+  from: AutozoomCamera
+  to: AutozoomCamera
+}
+
 type PeekabooBounds = {
   height: number
   width: number
@@ -1367,6 +1379,7 @@ class PeekabooVideo implements AsyncDisposable {
   private captionedVideoFilter(): VideoFilter | undefined {
     const zoomFilter = autozoomVideoFilter({
       assPath: this.stepSpans.length === 0 ? undefined : this.assPath,
+      finalEnd: this.videoEndedAt || this.timestamp() || 0,
       videoBounds: this.videoBounds,
       zooms: this.videoZoomSpans(),
     })
@@ -2234,6 +2247,7 @@ function formatAssTime(ms: number) {
 
 function autozoomVideoFilter(options: {
   assPath?: string
+  finalEnd: number
   videoBounds: { height: number; width: number }
   zooms: VideoZoomSpan[]
 }): VideoFilter | undefined {
@@ -2241,7 +2255,11 @@ function autozoomVideoFilter(options: {
     return undefined
   }
 
-  const segments = autozoomVideoSegments(options.zooms)
+  const segments = autozoomCameraSegments(
+    options.zooms,
+    options.videoBounds,
+    options.finalEnd,
+  )
   const filters: string[] = []
   const labels: string[] = []
 
@@ -2251,16 +2269,13 @@ function autozoomVideoFilter(options: {
     labels.push(`[${label}]`)
 
     const trim = `[0:v]trim=start=${formatSeconds(segment.start)}:end=${formatSeconds(segment.end)},setpts=PTS-STARTPTS`
+    const transitionSeconds = formatSeconds(
+      Math.min(280, segment.end - segment.start),
+    )
 
-    if (segment.zoom) {
-      const crop = autozoomCrop(segment.zoom, options.videoBounds)
-      filters.push(
-        `${trim},crop=${crop.width}:${crop.height}:${crop.x}:${crop.y},scale=${options.videoBounds.width}:${options.videoBounds.height}[${label}]`,
-      )
-      continue
-    }
-
-    filters.push(`${trim}[${label}]`)
+    filters.push(
+      `${trim},${autozoomCropFilter(segment, transitionSeconds)},scale=${options.videoBounds.width}:${options.videoBounds.height}[${label}]`,
+    )
   }
 
   let outputLabel = labels.length === 1 ? labels[0].slice(1, -1) : 'azconcat'
@@ -2281,27 +2296,89 @@ function autozoomVideoFilter(options: {
   }
 }
 
-function autozoomVideoSegments(zooms: VideoZoomSpan[]) {
-  const segments: Array<VideoSpan & { zoom?: VideoZoomSpan }> = []
+function autozoomCameraSegments(
+  zooms: VideoZoomSpan[],
+  videoBounds: { height: number; width: number },
+  finalEnd: number,
+) {
+  const fullFrame = autozoomFullFrame(videoBounds)
+  const segments: AutozoomCameraSegment[] = []
+  let current = fullFrame
   let cursor = 0
 
   for (const zoom of zooms) {
     if (zoom.start > cursor) {
       segments.push({
         end: zoom.start,
+        from: current,
         start: cursor,
+        to: fullFrame,
       })
+      current = fullFrame
     }
 
+    const next = autozoomCrop(zoom, videoBounds)
     segments.push({
       end: zoom.end,
+      from: current,
       start: zoom.start,
-      zoom,
+      to: next,
     })
+    current = next
     cursor = Math.max(cursor, zoom.end)
   }
 
+  if (finalEnd > cursor) {
+    segments.push({
+      end: finalEnd,
+      from: current,
+      start: cursor,
+      to: fullFrame,
+    })
+  }
+
   return segments.filter((segment) => segment.end > segment.start)
+}
+
+function autozoomCropFilter(
+  segment: AutozoomCameraSegment,
+  transitionSeconds: string,
+) {
+  const ease = autozoomEaseExpression(transitionSeconds)
+  const width = autozoomInterpolateExpression(segment.from.width, segment.to.width, ease)
+  const height = autozoomInterpolateExpression(segment.from.height, segment.to.height, ease)
+  const x = autozoomInterpolateExpression(segment.from.x, segment.to.x, ease)
+  const y = autozoomInterpolateExpression(segment.from.y, segment.to.y, ease)
+
+  return `crop=w='${width}':h='${height}':x='${x}':y='${y}'`
+}
+
+function autozoomEaseExpression(transitionSeconds: string) {
+  const progress = `min(t/${transitionSeconds},1)`
+  return `((${progress})*(${progress})*(3-2*(${progress})))`
+}
+
+function autozoomInterpolateExpression(
+  from: number,
+  to: number,
+  ease: string,
+) {
+  const delta = to - from
+
+  if (delta === 0) {
+    return String(from)
+  }
+
+  return `(${from}+${delta}*${ease})`
+}
+
+function autozoomFullFrame(videoBounds: { height: number; width: number }) {
+  return {
+    height: videoBounds.height,
+    width: videoBounds.width,
+    x: 0,
+    y: 0,
+  }
 }
 
 function autozoomCrop(
