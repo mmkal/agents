@@ -54,7 +54,7 @@ test('tsc in Cursor', async () => {
   `
   await ide.type(tsWithBug, { profile: "linear", delay: 10, noAutoFocus: true })
 
-  await ide.hotkey('cmd,s', { noAutoFocus: true })
+  await ide.hotkey('cmd,s')
 
   expect(await computer.readFile('test.ts')).toContain('const username: number')
 

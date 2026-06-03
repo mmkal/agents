@@ -3,6 +3,7 @@ import { existsSync, mkdtempSync } from 'node:fs'
 import * as fs from 'node:fs/promises'
 import { tmpdir } from 'node:os'
 import { basename, isAbsolute, join } from 'node:path'
+import { performance } from 'node:perf_hooks'
 
 function shellQuote(value: string) {
   return `'${value.replace(/'/g, `'\\''`)}'`
@@ -234,6 +235,7 @@ class PeekabooWindow implements AsyncDisposable {
   private exec: ComputerExec
   private mouseGuard: PeekabooMouseGuard
   private ocrCaptureIndex = 0
+  private video?: PeekabooVideo
   private windowBounds: PeekabooBounds
   private windowId: number
 
@@ -405,6 +407,14 @@ class PeekabooWindow implements AsyncDisposable {
     await this.exec`peekaboo window focus ${raw(this.targetFlags())}`
   }
 
+  async deadAir<T>(action: () => Promise<T>) {
+    if (!this.video) {
+      return await action()
+    }
+
+    return await this.video.deadAir(action)
+  }
+
   async sleep(ms: number) {
     await new Promise((resolve) => setTimeout(resolve, ms))
   }
@@ -413,7 +423,7 @@ class PeekabooWindow implements AsyncDisposable {
     await fs.mkdir(this.assetsDirectory, { recursive: true })
     const videoPath = join(
       this.assetsDirectory,
-      `video-${Date.now()}-${this.windowId}.mp4`,
+      `video-${Date.now()}-${this.windowId}`,
     )
     const video = new PeekabooVideo({
       assetsDirectory: this.assetsDirectory,
@@ -421,6 +431,8 @@ class PeekabooWindow implements AsyncDisposable {
       windowId: this.windowId,
     })
     await video.start()
+    this.video = video
+    await this.focus()
     return video
   }
 
@@ -501,14 +513,20 @@ class PeekabooVideo implements AsyncDisposable {
   path: string
   private assetsDirectory: string
   private child?: ReturnType<typeof spawn>
+  private deadAirDepth = 0
+  private deadAirSpans: Array<[startMs: number, endMs: number]> = []
   private finish?: Promise<void>
   private helperPath: string
+  private metaPath: string
   private ready?: Promise<void>
+  private rawPath: string
   private saved?: Promise<string>
   private sourcePath: string
+  private startedAt?: number
   private stderr = ''
   private stdout = ''
   private stopped = false
+  private tightenedPath: string
   private windowId: number
 
   constructor(options: {
@@ -518,16 +536,20 @@ class PeekabooVideo implements AsyncDisposable {
   }) {
     this.assetsDirectory = options.assetsDirectory
     this.helperPath = join(options.assetsDirectory, 'screen-capture-recorder')
+    this.metaPath = join(options.path, 'meta.json')
     this.path = options.path
+    this.rawPath = join(options.path, 'raw.mp4')
     this.sourcePath = join(
       options.assetsDirectory,
       'screen-capture-recorder.swift',
     )
+    this.tightenedPath = join(options.path, 'tightened.mp4')
     this.windowId = options.windowId
   }
 
   async start() {
     await fs.mkdir(this.assetsDirectory, { recursive: true })
+    await fs.mkdir(this.path, { recursive: true })
     await this.compileHelper()
     this.startRecorder()
     await this.ready
@@ -539,7 +561,26 @@ class PeekabooVideo implements AsyncDisposable {
 
   async save() {
     this.saved = this.saved || this.stopAndFinalize()
-    return await this.saved
+    const path = await this.saved
+    console.log(`Video assets: ${path}`)
+    return path
+  }
+
+  async deadAir<T>(action: () => Promise<T>) {
+    if (!this.startedAt || this.deadAirDepth > 0) {
+      return await action()
+    }
+
+    const startMs = performance.now() - this.startedAt
+    this.deadAirDepth += 1
+
+    try {
+      return await action()
+    } finally {
+      this.deadAirDepth -= 1
+      const endMs = performance.now() - this.startedAt
+      this.deadAirSpans.push([Math.round(startMs), Math.round(endMs)])
+    }
   }
 
   private async stopAndFinalize() {
@@ -547,12 +588,12 @@ class PeekabooVideo implements AsyncDisposable {
     const finish = this.finish
 
     if (!child || !finish) {
-      throw new Error(`Video recorder was not started: ${this.path}`)
+      throw new Error(`Video recorder was not started: ${this.rawPath}`)
     }
 
     if (!this.stopped && child.exitCode === null && !child.killed) {
       if (!child.stdin) {
-        throw new Error(`Video recorder stdin was not available: ${this.path}`)
+        throw new Error(`Video recorder stdin was not available: ${this.rawPath}`)
       }
 
       this.stopped = true
@@ -561,12 +602,12 @@ class PeekabooVideo implements AsyncDisposable {
 
     await finish
 
-    const stat = await fs.stat(this.path).catch(() => undefined)
+    const stat = await fs.stat(this.rawPath).catch(() => undefined)
 
     if (!stat || stat.size === 0) {
       throw new Error(
         [
-          `Video was not saved: ${this.path}`,
+          `Video was not saved: ${this.rawPath}`,
           `Recorder: ${this.helperPath}`,
           this.stdout.trim() ? `stdout:\n${this.stdout.trim()}` : '',
           this.stderr.trim() ? `stderr:\n${this.stderr.trim()}` : '',
@@ -575,6 +616,9 @@ class PeekabooVideo implements AsyncDisposable {
           .join('\n\n'),
       )
     }
+
+    await this.writeMeta()
+    await this.writeTightenedVideo()
 
     return this.path
   }
@@ -593,7 +637,7 @@ class PeekabooVideo implements AsyncDisposable {
   private startRecorder() {
     const child = spawn(
       this.helperPath,
-      [String(this.windowId), this.path],
+      [String(this.windowId), this.rawPath],
       {
         cwd: process.cwd(),
         env: commandEnvironment(),
@@ -609,6 +653,7 @@ class PeekabooVideo implements AsyncDisposable {
 
         if (!ready && this.stdout.includes('ready\n')) {
           ready = true
+          this.startedAt = performance.now()
           resolve()
         }
       })
@@ -663,6 +708,49 @@ class PeekabooVideo implements AsyncDisposable {
         )
       })
     })
+  }
+
+  private async writeMeta() {
+    await fs.writeFile(
+      this.metaPath,
+      `${JSON.stringify({ deadAir: this.deadAirSpans }, null, 2)}\n`,
+    )
+  }
+
+  private async writeTightenedVideo() {
+    const deadAir = mergeDeadAirSpans(this.deadAirSpans)
+
+    if (deadAir.length === 0) {
+      await fs.copyFile(this.rawPath, this.tightenedPath)
+      return
+    }
+
+    const selectExpression = `not(${deadAir
+      .map(
+        ([startMs, endMs]) =>
+          `between(t,${formatSeconds(startMs)},${formatSeconds(endMs)})`,
+      )
+      .join('+')})`
+
+    await runShellCommand(
+      [
+        'ffmpeg',
+        '-y',
+        '-hide_banner',
+        '-loglevel error',
+        '-i',
+        shellQuote(this.rawPath),
+        '-vf',
+        shellQuote(`select='${selectExpression}',setpts=N/(60*TB)`),
+        '-an',
+        '-r 60',
+        shellQuote(this.tightenedPath),
+      ].join(' '),
+      {
+        cwd: process.cwd(),
+        timeout: 30_000,
+      },
+    )
   }
 }
 
@@ -1006,30 +1094,33 @@ class PeekabooOcrLocator {
       'ocr.waitFor',
       { updatesMousePosition: false },
       async () => {
-        const deadline = Date.now() + 5_000
-        let lastError: unknown
+        return await this.window.deadAir(async () => {
+          const deadline = Date.now() + 5_000
+          let lastError: unknown
 
-        while (Date.now() < deadline) {
-          try {
-            this.match = undefined
-            await this.resolve()
-            return this
-          } catch (error) {
-            lastError = error
+          while (Date.now() < deadline) {
+            try {
+              this.match = undefined
+              await this.resolve()
+              return this
+            } catch (error) {
+              lastError = error
+            }
+
+            await this.window.sleep(100)
           }
 
-          await this.window.sleep(100)
-        }
-
-        throw new Error(
-          `Timed out waiting for OCR text ${JSON.stringify(this.options.text)}. ${String(lastError)}`,
-        )
+          throw new Error(
+            `Timed out waiting for OCR text ${JSON.stringify(this.options.text)}. ${String(lastError)}`,
+          )
+        })
       },
     )
   }
 
   private resolve() {
-    this.match = this.match || this.window.findOcrMatch(this.options)
+    this.match =
+      this.match || this.window.deadAir(() => this.window.findOcrMatch(this.options))
     return this.match
   }
 }
@@ -1348,6 +1439,33 @@ function sayMouseMoved() {
     }
   })
   child.unref()
+}
+
+function formatSeconds(ms: number) {
+  const value = (ms / 1000).toFixed(3).replace(/\.?0+$/, '')
+  return value || '0'
+}
+
+function mergeDeadAirSpans(
+  spans: Array<[startMs: number, endMs: number]>,
+): Array<[startMs: number, endMs: number]> {
+  const sorted = spans
+    .filter(([startMs, endMs]) => endMs > startMs)
+    .sort(([leftStart], [rightStart]) => leftStart - rightStart)
+  const merged: Array<[startMs: number, endMs: number]> = []
+
+  for (const [startMs, endMs] of sorted) {
+    const previous = merged[merged.length - 1]
+
+    if (!previous || startMs > previous[1]) {
+      merged.push([startMs, endMs])
+      continue
+    }
+
+    previous[1] = Math.max(previous[1], endMs)
+  }
+
+  return merged
 }
 
 function centerOfScreenBounds(bounds: ScreenBounds): ScreenCoordinates {
