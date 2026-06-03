@@ -50,25 +50,12 @@ test('sqlfu demo', async () => {
   await computer.writeFile('posts-object.ts', '')
 
   expect(await computer.glob('node_modules/sqlfu/package.json')).toHaveLength(1)
-  expect(await computer.permissions()).toMatchObject({
-    permissions: expect.objectContaining({
-      isGranted: true,
-      name: 'Accessibility',
-    }),
-  })
 
-  await using ide = await computer.open('.', {
-    app: 'Cursor',
-    waitUntilReady: true,
-  })
+  await using ide = await computer.open('.', { app: 'Cursor', waitUntilReady: true })
 
-  await ide.hotkey('cmd,k')
-  await ide.hotkey('cmd,w')
+  await ide.hotkey(['cmd,k', 'cmd,w'])
 
-  await computer.open('posts-object.ts', {
-    app: 'Cursor',
-    waitUntilReady: true,
-  })
+  await computer.open('posts-object.ts', { app: 'Cursor', waitUntilReady: true })
 
   await ide.click(ide.center())
 

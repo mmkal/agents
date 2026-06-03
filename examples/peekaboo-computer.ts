@@ -267,6 +267,12 @@ export class PeekabooComputer
     })
     await fs.mkdir(computer.directory, { recursive: true })
     await fs.mkdir(computer.assetsDirectory, { recursive: true })
+
+    const {data} = await computer.permissions()
+    if (!data.permissions.some((p: any) => p.name === 'Accessibility' && p.isGranted)) {
+      const grantInstrctions = await computer.exec`peekaboo permissions grant`
+      throw new Error(`Accessibility permission is not granted. Instructions:\n${grantInstrctions.stdout}`)
+    }
     return computer
   }
 
@@ -400,16 +406,7 @@ export class PeekabooComputer
       { updatesMousePosition: false },
       async () => {
         const result = await this.exec`peekaboo permissions --json`
-        const payload = JSON.parse(result.stdout)
-        const permissions = payload.data.permissions
-        const accessibility = permissions.find(
-          (permission: any) => permission.name === 'Accessibility',
-        )
-
-        return {
-          allPermissions: permissions,
-          permissions: accessibility,
-        }
+        return JSON.parse(result.stdout)
       },
     )
   }
@@ -556,24 +553,26 @@ class PeekabooWindow implements AsyncDisposable, PeekabooOcrParent {
     }
   }
 
-  async hotkey(keys: string, options: { noAutoFocus?: boolean; linger?: number } = {}) {
+  async hotkey(keyses: string | string[], options: { noAutoFocus?: boolean; linger?: number } = {}) {
     const targetFlags = options.noAutoFocus ? '' : this.targetFlags()
 
-    await this.guardedAction(
-      `hotkey ${keys}`,
-      { updatesMousePosition: false },
-      async () => {
-        await this.exec`peekaboo hotkey ${keys} ${raw(targetFlags)} ${raw(
-          options.noAutoFocus ? '--no-auto-focus' : '',
-        )}`
-        if (options.linger) {
-          await this.sleep(options.linger)
-        }
-        if (keys.startsWith('cmd,') || keys.startsWith('cmd+')) {
-          await this.press('escape') // not sure if this is a peekaboo bug or me being dumb, but without this cmd stays "down" after the hotkey is pressed
-        }
-      },
-    )
+    for (const keys of [keyses].flat()) {
+      await this.guardedAction(
+        `hotkey ${keys}`,
+        { updatesMousePosition: false },
+        async () => {
+          await this.exec`peekaboo hotkey ${keys} ${raw(targetFlags)} ${raw(
+            options.noAutoFocus ? '--no-auto-focus' : '',
+          )}`
+          if (options.linger) {
+            await this.sleep(options.linger)
+          }
+          if (keys.startsWith('cmd,') || keys.startsWith('cmd+')) {
+            await this.press('escape') // not sure if this is a peekaboo bug or me being dumb, but without this cmd stays "down" after the hotkey is pressed
+          }
+        },
+      )
+    }
   }
 
   async press(keys: string, options: PressOptions = {}) {
