@@ -112,7 +112,7 @@ test('sqlfu demo', async () => {
   })
 
   await computer.step('use the query', async () => {
-    await ide.hotkey('cmd,down')
+    await ide.scroll({ direction: 'down', amount: 2, smooth: true })
 
     const migrateText = ide.ocr('this.db.migrate')
     await migrateText.click('end')
@@ -136,7 +136,7 @@ test('sqlfu demo', async () => {
   })
 
   await computer.step('add a migration', async () => {
-    await ide.hotkey('cmd,up') // jump to top
+    await ide.scroll({ direction: 'up', amount: 2, smooth: true })
     await ide.ocr('migrations').highlight({ linger: 600 });
 
     await ide.hotkey('ctrl,`')
@@ -160,7 +160,7 @@ test('sqlfu demo', async () => {
     await ide.sleep(500)
     await ide.press('return')
     await ide.hotkey('cmd,1')
-    await ide.scroll({ direction: 'down', amount: 3, smooth: true })
+    await ide.scroll({ direction: 'down', amount: 2, smooth: true })
 
     await ide.ocr('alter table', {before: 'queries'}).click('start');
     await ide.hotkey('cmd+shift+right', { linger: 1000 })
