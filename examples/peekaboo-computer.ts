@@ -1,4 +1,5 @@
 import { spawn } from 'node:child_process'
+import { EventEmitter } from 'node:events'
 import { existsSync, mkdtempSync } from 'node:fs'
 import * as fs from 'node:fs/promises'
 import { tmpdir } from 'node:os'
@@ -87,6 +88,16 @@ type PressOptions = {
   noAutoFocus?: boolean
 }
 
+type StepEndedEvent = {
+  durationMs: number
+  error?: unknown
+  title: string
+}
+
+type StepStartedEvent = {
+  title: string
+}
+
 type PeekabooBounds = {
   height: number
   width: number
@@ -157,7 +168,10 @@ type PeekabooOcrParent = PeekabooLocatorParent & {
   type(text: string, options?: TypeOptions): Promise<void>
 }
 
-export class PeekabooComputer implements AsyncDisposable, PeekabooCommandParent {
+export class PeekabooComputer
+  extends EventEmitter
+  implements AsyncDisposable, PeekabooCommandParent
+{
   assetsDirectory: string
   directory: string
   exec: ComputerExec
@@ -184,6 +198,7 @@ export class PeekabooComputer implements AsyncDisposable, PeekabooCommandParent 
     directory: string
     parentDirectory: string
   }) {
+    super()
     this.assetsDirectory = options.assetsDirectory
     this.directory = options.directory
     this.parentDirectory = options.parentDirectory
@@ -205,6 +220,33 @@ export class PeekabooComputer implements AsyncDisposable, PeekabooCommandParent 
 
   async say(message: string) {
     await this.exec`say ${message}`
+  }
+
+  on(event: 'step:end', listener: (event: StepEndedEvent) => void): this
+  on(event: 'step:start', listener: (event: StepStartedEvent) => void): this
+  on(event: string, listener: (...args: any[]) => void): this {
+    return super.on(event, listener)
+  }
+
+  async step<T>(title: string, action: () => Promise<T>) {
+    const startedAt = performance.now()
+    this.emit('step:start', { title } satisfies StepStartedEvent)
+
+    try {
+      const result = await action()
+      this.emit('step:end', {
+        durationMs: Math.round(performance.now() - startedAt),
+        title,
+      } satisfies StepEndedEvent)
+      return result
+    } catch (error) {
+      this.emit('step:end', {
+        durationMs: Math.round(performance.now() - startedAt),
+        error,
+        title,
+      } satisfies StepEndedEvent)
+      throw error
+    }
   }
 
   async guardedAction<T>(

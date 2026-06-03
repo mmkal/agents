@@ -6,6 +6,9 @@ const sqlfuPackageRoot = '/Users/mmkal/src/sqlfu/packages/sqlfu'
 
 test('sqlfu demo', async () => {
   await using computer = await PeekabooComputer.create(expect.getState())
+  computer.on('step:start', ({ title }) => {
+    void computer.exec`say ${title}`.catch(() => {})
+  })
 
   await computer.writeJsonFile('package.json', {
     type: 'module',
@@ -66,87 +69,101 @@ test('sqlfu demo', async () => {
 
   await ide.click(ide.center())
 
-  await ide.type(postsObjectSource, {delay: -1})
-  await ide.hotkey('cmd,s')
+  await computer.step('write the initial source file', async () => {
+    await ide.type(postsObjectSource, {delay: -1})
+    await ide.hotkey('cmd,s')
 
-  await computer.waitForFile('posts-object.ts', {
-    contains: 'static dbConfig = defineConfig',
+    await computer.waitForFile('posts-object.ts', {
+      contains: 'static dbConfig = defineConfig',
+    })
   })
 
   await using video = await ide.startVideo()
 
-  await ide.ocr('listPosts: sql').highlight();
-  await ide.sleep(600);
+  await computer.step('generate query types', async () => {
+    await ide.ocr('listPosts: sql').highlight();
+    await ide.sleep(600);
 
-  await ide.hotkey('ctrl,`')
-  await ide.sleep(150)
-  await ide.type('sqlfu --config posts-object.ts generate --watch')
-  await ide.press('return', { noAutoFocus: true })
+    await ide.hotkey('ctrl,`')
+    await ide.sleep(150)
+    await ide.type('sqlfu --config posts-object.ts generate --watch')
+    await ide.press('return', { noAutoFocus: true })
 
-  await computer.waitForFile('posts-object.ts', {
-    contains: /listPosts: sql.many<{.+}>/,
+    await computer.waitForFile('posts-object.ts', {
+      contains: /listPosts: sql.many<{.+}>/,
+    })
+
+    await ide.ocr('sql.many').click('start')
+    await ide.hotkey('cmd+shift+right', { linger: 1000 })
   })
 
-  await ide.ocr('sql.many').click('start')
-  await ide.hotkey('cmd+shift+right', { linger: 1000 })
+  await computer.step('update the query - types are updated automatically', async () => {
+    await ide.ocr('from posts').append(' limit :limit')
 
-  await ide.ocr('from posts').append(' limit :limit')
+    await ide.hotkey('cmd,s')
 
-  await ide.hotkey('cmd,s')
+    await computer.waitForFile('posts-object.ts', {
+      contains: /listPosts: sql.many<{.*limit.*}>/,
+    })
 
-  await computer.waitForFile('posts-object.ts', {
-    contains: /listPosts: sql.many<{.*limit.*}>/,
+    await ide.ocr('sql.many').click('start')
+    await ide.hotkey('cmd+shift+right', { linger: 1000 })
   })
 
-  await ide.ocr('sql.many').click('start')
-  await ide.hotkey('cmd+shift+right', { linger: 1000 })
+  await computer.step('use the query', async () => {
+    await ide.hotkey('cmd,down')
 
-  await ide.hotkey('cmd,down')
+    const migrateText = ide.ocr('this.db.migrate')
+    await migrateText.click('end')
+    await ide.press('down')
 
-  const migrateText = ide.ocr('this.db.migrate')
-  await migrateText.click('end')
-  await ide.press('down')
+    const badMethod = dedent`
+      async getPosts() {
+        return this.db.listPosts({ limitttt: 10 })
+      }
+    `
+    await ide.type('\n\n' + badMethod, {indent: 2})
+    await ide.press('escape')
+  })
 
-  const badMethod = dedent`
-    async getPosts() {
-      return this.db.listPosts({ limitttt: 10 })
-    }
-  `
-  await ide.type('\n\n' + badMethod, {indent: 2})
-  await ide.press('escape')
+  await computer.step('fix T.S.C errors - query is strongly-typed', async () => {
+    const limitt = await ide.ocr('limitttt').hover({ linger: 1000 })
+    await limitt.replace('limit')
 
-  const limitt = await ide.ocr('limitttt').hover({ linger: 1000 })
-  await limitt.replace('limit')
+    await ide.hotkey('cmd,s')
+    await ide.sleep(500)
+  })
 
-  await ide.hotkey('cmd,s')
-  await ide.sleep(500)
+  await computer.step('add a migration', async () => {
+    await ide.hotkey('cmd,up') // jump to top
+    await ide.ocr('migrations').highlight({ linger: 600 });
 
-  await ide.hotkey('cmd,up') // jump to top
-  await ide.ocr('migrations').highlight({ linger: 600 });
+    await ide.hotkey('ctrl,`')
+    await ide.hotkey('ctrl,c')
 
-  await ide.hotkey('ctrl,`')
-  await ide.hotkey('ctrl,c')
+    await ide.type(`sqlfu --config posts-object.ts draft\n`)
+    await ide.sleep(500)
+    await ide.press('return')
 
-  await ide.type(`sqlfu --config posts-object.ts draft\n`)
-  await ide.sleep(500)
-  await ide.press('return')
+    await ide.sleep(500)
+  })
 
-  await ide.sleep(500)
+  await computer.step('edit definitions and add another migration', async () => {
+    await ide
+      .ocr('body text', { before: 'migrations:' })
+      .append(',\n        published_at date')
+    await ide.hotkey('cmd,s')
 
-  await ide
-    .ocr('body text', { before: 'migrations:' })
-    .append(',\n        published_at date')
-  await ide.hotkey('cmd,s')
+    await ide.hotkey('ctrl,`')
+    await ide.type(`sqlfu --config posts-object.ts draft\n`)
+    await ide.sleep(500)
+    await ide.press('return')
+    await ide.hotkey('cmd,1')
+    await ide.scroll({ direction: 'down', amount: 3, smooth: true })
 
-  await ide.hotkey('ctrl,`')
-  await ide.type(`sqlfu --config posts-object.ts draft\n`)
-  await ide.sleep(500)
-  await ide.press('return')
-  await ide.hotkey('cmd,1')
-  await ide.scroll({ direction: 'down', amount: 3, smooth: true })
-
-  await ide.ocr('alter table', {before: 'queries'}).click('start');
-  await ide.hotkey('cmd+shift+right', { linger: 1000 })
+    await ide.ocr('alter table', {before: 'queries'}).click('start');
+    await ide.hotkey('cmd+shift+right', { linger: 1000 })
+  })
 
   await video.save()
 }, 240_000)
