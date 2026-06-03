@@ -69,12 +69,11 @@ test('sqlfu demo', async () => {
   await ide.type(postsObjectSource, {delay: -1})
   await ide.hotkey('cmd,s')
 
-  await using video = await ide.startVideo()
-
   await computer.waitForFile('posts-object.ts', {
     contains: 'static dbConfig = defineConfig',
-    timeout: 30_000,
   })
+
+  await using video = await ide.startVideo()
 
   await ide.ocr('listPosts: sql').highlight();
   await ide.sleep(600);
@@ -88,6 +87,9 @@ test('sqlfu demo', async () => {
     contains: /listPosts: sql.many<{.+}>/,
   })
 
+  await ide.ocr('sql.many').click('start')
+  await ide.hotkey('cmd+shift+right', { linger: 1000 })
+
   await ide.ocr('from posts').append(' limit :limit')
 
   await ide.hotkey('cmd,s')
@@ -95,6 +97,9 @@ test('sqlfu demo', async () => {
   await computer.waitForFile('posts-object.ts', {
     contains: /listPosts: sql.many<{.*limit.*}>/,
   })
+
+  await ide.ocr('sql.many').click('start')
+  await ide.hotkey('cmd+shift+right', { linger: 1000 })
 
   await ide.hotkey('cmd,down')
 
@@ -141,7 +146,7 @@ test('sqlfu demo', async () => {
   await ide.scroll({ direction: 'down', amount: 3, smooth: true })
 
   await ide.ocr('alter table', {before: 'queries'}).click('start');
-  await ide.hotkey('cmd+shift+right')
+  await ide.hotkey('cmd+shift+right', { linger: 1000 })
 
   await video.save()
 }, 240_000)

@@ -432,7 +432,7 @@ class PeekabooWindow implements AsyncDisposable, PeekabooOcrParent {
     }
   }
 
-  async hotkey(keys: string, options: { noAutoFocus?: boolean } = {}) {
+  async hotkey(keys: string, options: { noAutoFocus?: boolean; linger?: number } = {}) {
     const targetFlags = options.noAutoFocus ? '' : this.targetFlags()
 
     await this.guardedAction(
@@ -442,7 +442,10 @@ class PeekabooWindow implements AsyncDisposable, PeekabooOcrParent {
         await this.exec`peekaboo hotkey ${keys} ${raw(targetFlags)} ${raw(
           options.noAutoFocus ? '--no-auto-focus' : '',
         )}`
-        if (keys.startsWith('cmd,')) {
+        if (options.linger) {
+          await this.sleep(options.linger)
+        }
+        if (keys.startsWith('cmd,') || keys.startsWith('cmd+')) {
           await this.press('escape') // not sure if this is a peekaboo bug or me being dumb, but without this cmd stays "down" after the hotkey is pressed
         }
       },
