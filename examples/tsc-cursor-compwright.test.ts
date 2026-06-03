@@ -64,11 +64,11 @@ test('tsc in Cursor', async () => {
   await ide.hotkey('cmd,1')
   await ide.hotkey('escape')
 
-  const numberText = ide.ocr({ text: 'number' }) // wait for the number text to be visible - do this before hovering on the type error because otherwise there will be multiple instances of the text "number"
+  const numberText = ide.ocr('number') // wait for the number text to be visible - do this before hovering on the type error because otherwise there will be multiple instances of the text "number"
   await numberText.waitFor()
 
-  await ide.ocr({ text: 'username:' }).hover()
-  await ide.ocr({ text: "Type 'string' is not assignable to type 'number'" }).waitFor()
+  await ide.ocr('username:').hover()
+  await ide.ocr("Type 'string' is not assignable to type 'number'").waitFor()
   await ide.sleep(500)
 
   await numberText.dblclick()

@@ -53,7 +53,9 @@ type MouseMovedEvent = {
   location: string
 }
 
-type OcrOptions = {
+type OcrOptions = {}
+
+type OcrMatchOptions = OcrOptions & {
   text: string
 }
 
@@ -136,7 +138,7 @@ type PeekabooLocatorParent = PeekabooCommandParent & {
 
 type PeekabooOcrParent = PeekabooLocatorParent & {
   deadAir<T>(action: () => Promise<T>): Promise<T>
-  findOcrMatch(options: OcrOptions): Promise<OcrMatchResult>
+  findOcrMatch(options: OcrMatchOptions): Promise<OcrMatchResult>
 }
 
 export class PeekabooComputer implements AsyncDisposable, PeekabooCommandParent {
@@ -467,14 +469,14 @@ class PeekabooWindow implements AsyncDisposable, PeekabooOcrParent {
     })
   }
 
-  ocr(options: OcrOptions) {
+  ocr(text: string, options: OcrOptions = {}) {
     return new PeekabooOcrLocator({
-      options,
       parent: this,
+      text,
     })
   }
 
-  async findOcrMatch(options: OcrOptions): Promise<OcrMatchResult> {
+  async findOcrMatch(options: OcrMatchOptions): Promise<OcrMatchResult> {
     const imagePath = await this.captureWindowImage()
     const scriptPath = await this.visionOcrScriptPath()
     const result = await this.exec`swift ${scriptPath} ${imagePath} ${options.text}`
@@ -1086,12 +1088,12 @@ class PeekabooLocator {
 
 class PeekabooOcrLocator {
   private match?: Promise<OcrMatchResult>
-  private options: OcrOptions
   private parent: PeekabooOcrParent
+  private text: string
 
-  constructor(options: { options: OcrOptions; parent: PeekabooOcrParent }) {
-    this.options = options.options
+  constructor(options: { parent: PeekabooOcrParent; text: string }) {
     this.parent = options.parent
+    this.text = options.text
   }
 
   async click(position: OcrClickPosition = 'center') {
@@ -1108,7 +1110,7 @@ class PeekabooOcrLocator {
   }
 
   async highlight() {
-    if (this.options.text.match(/^\w+$/)) {
+    if (this.text.match(/^\w+$/)) {
       return this.dblclick('center')
     }
 
@@ -1260,7 +1262,7 @@ class PeekabooOcrLocator {
           }
 
           throw new Error(
-            `Timed out waiting for OCR text ${JSON.stringify(this.options.text)}. ${String(lastError)}`,
+            `Timed out waiting for OCR text ${JSON.stringify(this.text)}. ${String(lastError)}`,
           )
         })
       },
@@ -1269,7 +1271,8 @@ class PeekabooOcrLocator {
 
   private resolve() {
     this.match =
-      this.match || this.parent.deadAir(() => this.parent.findOcrMatch(this.options))
+      this.match ||
+      this.parent.deadAir(() => this.parent.findOcrMatch({ text: this.text }))
     return this.match
   }
 }

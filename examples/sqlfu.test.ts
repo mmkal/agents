@@ -80,7 +80,7 @@ test('sqlfu demo', async () => {
     timeout: 30_000,
   })
 
-  await ide.ocr({ text: 'listPosts: sql' }).highlight();
+  await ide.ocr('listPosts: sql').highlight();
   await ide.sleep(600);
 
   await ide.hotkey('ctrl,`')
@@ -92,7 +92,7 @@ test('sqlfu demo', async () => {
     contains: /listPosts: sql.many<{.+}>/,
   })
 
-  const fromPosts = ide.ocr({ text: 'from posts' })
+  const fromPosts = ide.ocr('from posts')
   await fromPosts.click('end')
   await ide.type(' limit :limit')
 
@@ -104,7 +104,7 @@ test('sqlfu demo', async () => {
 
   await ide.hotkey('cmd,down')
 
-  const migrateText = ide.ocr({ text: 'this.db.migrate' })
+  const migrateText = ide.ocr('this.db.migrate')
   await migrateText.click('end')
   await ide.press('down')
 
@@ -116,7 +116,7 @@ test('sqlfu demo', async () => {
   await ide.type('\n\n' + badMethod, {indent: 2})
   await ide.press('escape')
 
-  const limitt = ide.ocr({ text: 'limitt' })
+  const limitt = ide.ocr('limitt')
   await limitt.hover();
   await ide.sleep(1000);
   await limitt.dblclick();
@@ -129,7 +129,7 @@ test('sqlfu demo', async () => {
 
   await ide.hotkey('cmd,up')
   await ide.press('escape')
-  const migrationsText = ide.ocr({ text: 'migrations:'})
+  const migrationsText = ide.ocr('migrations:')
   await migrationsText.dblclick();
   await ide.sleep(600);
 
