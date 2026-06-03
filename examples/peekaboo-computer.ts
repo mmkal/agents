@@ -29,7 +29,7 @@ type ComputerExecOptions = {
 type ComputerExec = {
   (
     strings: TemplateStringsArray,
-    ...values: unknown[]
+    ...values: Array<string | number | { kind: 'raw-shell'; value: string }>
   ): Promise<ComputerExecResult>
   (options: ComputerExecOptions): ComputerExec
 }
@@ -465,17 +465,21 @@ class PeekabooWindow implements AsyncDisposable, PeekabooOcrParent {
   }
 
   async scroll(options: ScrollOptions) {
-    const delayFlag =
-      options.delay === undefined ? '' : `--delay ${options.delay}`
-    const targetFlags = options.noAutoFocus ? '' : this.targetFlags()
-
     await this.guardedAction(
       `scroll ${options.direction}`,
       { updatesMousePosition: false },
       async () => {
-        await this.exec`peekaboo scroll --direction ${options.direction} --amount ${options.amount} ${raw(targetFlags)} ${raw(delayFlag)} ${raw(
-          options.smooth ? '--smooth' : '',
-        )} ${raw(options.noAutoFocus ? '--no-auto-focus' : '')}`
+        const scriptPath = await this.focusedScrollScriptPath()
+        const smooth = options.smooth !== false
+        const steps = Math.max(1, Math.round(options.amount * (smooth ? 20 : 1)))
+        const pixelsPerStep = smooth ? 4 : 80
+        const delayMicroseconds = Math.round((options.delay ?? 8) * 1000)
+
+        if (!options.noAutoFocus) {
+          await this.focus()
+        }
+
+        await this.exec`swift ${scriptPath} ${options.direction} ${steps} ${pixelsPerStep} ${delayMicroseconds}`
         await this.sleep(100)
       },
     )
@@ -701,6 +705,13 @@ class PeekabooWindow implements AsyncDisposable, PeekabooOcrParent {
   private async visionOcrScriptPath() {
     const scriptPath = join(this.directory, 'vision-ocr.swift')
     await fs.writeFile(scriptPath, visionOcrSwiftSource)
+    return scriptPath
+  }
+
+  private async focusedScrollScriptPath() {
+    const scriptPath = join(this.assetsDirectory, 'focused-scroll.swift')
+    await fs.mkdir(this.assetsDirectory, { recursive: true })
+    await fs.writeFile(scriptPath, focusedScrollSwiftSource)
     return scriptPath
   }
 }
@@ -1904,6 +1915,54 @@ function windowBoundsForScreenBounds(
     y: Math.round(rounded.y - windowBounds.y),
   }
 }
+
+const focusedScrollSwiftSource = `
+import CoreGraphics
+import Foundation
+
+let direction = CommandLine.arguments.dropFirst().first ?? "down"
+let steps = Int(CommandLine.arguments.dropFirst(2).first ?? "20") ?? 20
+let pixelsPerStep = Int32(CommandLine.arguments.dropFirst(3).first ?? "4") ?? 4
+let delayMicroseconds = useconds_t(CommandLine.arguments.dropFirst(4).first ?? "8000") ?? 8_000
+
+let verticalPixels: Int32
+let horizontalPixels: Int32
+
+switch direction {
+case "up":
+  verticalPixels = pixelsPerStep
+  horizontalPixels = 0
+case "down":
+  verticalPixels = -pixelsPerStep
+  horizontalPixels = 0
+case "left":
+  verticalPixels = 0
+  horizontalPixels = pixelsPerStep
+case "right":
+  verticalPixels = 0
+  horizontalPixels = -pixelsPerStep
+default:
+  fputs("Unknown scroll direction: \\(direction)\\n", stderr)
+  exit(2)
+}
+
+for _ in 0..<steps {
+  guard let event = CGEvent(
+    scrollWheelEvent2Source: nil,
+    units: .pixel,
+    wheelCount: 2,
+    wheel1: verticalPixels,
+    wheel2: horizontalPixels,
+    wheel3: 0
+  ) else {
+    fputs("Could not create scroll event\\n", stderr)
+    exit(1)
+  }
+
+  event.post(tap: .cghidEventTap)
+  usleep(delayMicroseconds)
+}
+`
 
 const visionOcrSwiftSource = `
 import AppKit

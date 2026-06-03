@@ -64,7 +64,6 @@ test('sqlfu demo', async () => {
     waitUntilReady: true,
   })
 
-  await ide.hotkey('cmd,1')
   await ide.click(ide.center())
 
   await using video = await ide.startVideo()
@@ -75,7 +74,6 @@ test('sqlfu demo', async () => {
     profile: 'linear',
   })
   await ide.hotkey('cmd,s')
-  await ide.scroll({ amount: 1, direction: 'down', smooth: true })
 
   await computer.waitForFile('posts-object.ts', {
     contains: 'static dbConfig = defineConfig',
@@ -143,6 +141,11 @@ test('sqlfu demo', async () => {
   await ide.type(`sqlfu --config posts-object.ts draft\n`)
   await ide.sleep(500)
   await ide.press('return')
+  await ide.hotkey('cmd,1')
+  await ide.scroll({ direction: 'down', amount: 3, smooth: true })
+
+  await ide.ocr('alter table', {before: 'queries'}).highlight();
+  await ide.hotkey('cmd,right')
 
   await video.save()
 }, 240_000)
