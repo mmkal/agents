@@ -13,7 +13,7 @@ test('sqlfu demo', async () => {
   await computer.writeJsonFile('package.json', {
     type: 'module',
     devDependencies: {
-      '@types/node': '24.5.2',
+      '@cloudflare/workers-types': '4.20260603.1',
       typescript: '5.9.3',
     },
   })
@@ -23,11 +23,13 @@ test('sqlfu demo', async () => {
       moduleResolution: 'NodeNext',
       noEmit: true,
       strict: true,
-      target: 'ES2022',
-      types: ['node'],
+      target: 'ESNext',
+      lib: ['ESNext'],
+      types: ['@cloudflare/workers-types'],
     },
-    include: ['posts-object.ts'],
+    include: ['posts-object.ts', 'worker-env.d.ts'],
   })
+  await computer.writeFile('worker-env.d.ts', 'interface ImportMeta { url: string }\n')
   await computer.exec`mkdir -p .vscode`
   await computer.writeJsonFile('.vscode/settings.json', {
     'terminal.integrated.env.osx': {
@@ -168,9 +170,10 @@ test('sqlfu demo', async () => {
 }, 240_000)
 
 const postsObjectSource = dedent`
+  import {DurableObject} from 'cloudflare:workers';
   import {createDurableObjectClient, defineConfig, sql} from 'sqlfu';
 
-  export class PostsObject {
+  export class PostsObject extends DurableObject {
     static dbConfig = defineConfig({
       definitions: sql\`
         create table posts (
@@ -189,7 +192,8 @@ const postsObjectSource = dedent`
 
     db: typeof PostsObject.dbConfig.$type;
 
-    constructor(ctx: any) {
+    constructor(ctx: DurableObjectState, env: {}) {
+      super(ctx, env);
       this.db = PostsObject.dbConfig(createDurableObjectClient(ctx.storage));
       this.db.migrate();
     }
