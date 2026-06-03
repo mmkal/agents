@@ -65,12 +65,12 @@ type OcrMatchOptions = OcrOptions & {
 
 type OcrClickPosition = 'center' | 'end' | 'start'
 
+type ScrollBy = `${'down' | 'up'} ${number}px`
+
 type ScrollOptions = {
-  amount: number
   delay?: number
-  direction: 'down' | 'left' | 'right' | 'up'
+  jump?: boolean
   noAutoFocus?: boolean
-  smooth?: boolean
 }
 
 type SleepOptions = {
@@ -532,22 +532,30 @@ class PeekabooWindow implements AsyncDisposable, PeekabooOcrParent {
     )
   }
 
-  async scroll(options: ScrollOptions) {
+  async scroll(by: ScrollBy, options: ScrollOptions = {}) {
+    const match = by.match(/^(up|down) ([1-9]\d*)px$/)
+
+    if (!match) {
+      throw new Error(`Invalid scroll distance: ${by}`)
+    }
+
+    const direction = match[1] as 'down' | 'up'
+    const pixels = Number(match[2])
+
     await this.guardedAction(
-      `scroll ${options.direction}`,
+      `scroll ${direction}`,
       { updatesMousePosition: false },
       async () => {
         const scriptPath = await this.focusedScrollScriptPath()
-        const smooth = options.smooth !== false
-        const steps = Math.max(1, Math.round(options.amount * (smooth ? 20 : 1)))
-        const pixelsPerStep = smooth ? 4 : 80
-        const delayMicroseconds = Math.round((options.delay ?? 8) * 1000)
+        const delay = options.delay === undefined ? 8 : options.delay
+        const delayMicroseconds = Math.round(delay * 1000)
+        const mode = options.jump ? 'jump' : 'smooth'
 
         if (!options.noAutoFocus) {
           await this.focus()
         }
 
-        await this.exec`swift ${scriptPath} ${options.direction} ${steps} ${pixelsPerStep} ${delayMicroseconds}`
+        await this.exec`swift ${scriptPath} ${direction} ${pixels} ${mode} ${delayMicroseconds}`
         await this.sleep(100)
       },
     )
@@ -2210,9 +2218,12 @@ import CoreGraphics
 import Foundation
 
 let direction = CommandLine.arguments.dropFirst().first ?? "down"
-let steps = Int(CommandLine.arguments.dropFirst(2).first ?? "20") ?? 20
-let pixelsPerStep = Int32(CommandLine.arguments.dropFirst(3).first ?? "4") ?? 4
+let totalPixels = Int32(CommandLine.arguments.dropFirst(2).first ?? "80") ?? 80
+let mode = CommandLine.arguments.dropFirst(3).first ?? "smooth"
 let delayMicroseconds = useconds_t(CommandLine.arguments.dropFirst(4).first ?? "8000") ?? 8_000
+let smoothPixelsPerStep: Int32 = 4
+let steps = mode == "jump" ? 1 : max(1, Int(ceil(Double(totalPixels) / Double(smoothPixelsPerStep))))
+let pixelsPerStep = mode == "jump" ? totalPixels : Int32(ceil(Double(totalPixels) / Double(steps)))
 
 let verticalPixels: Int32
 let horizontalPixels: Int32
