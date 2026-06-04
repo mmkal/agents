@@ -11,8 +11,7 @@ test('draft an X post', async () => {
   const dom = x.dom()
 
   await dom.getByTestId('SideNav_NewTweet_Button').click()
-  await dom.getByTestId('tweetTextarea_0').click()
-  await x.type(postDraft)
+  await dom.getByTestId('tweetTextarea_0').type(postDraft)
   await dom.getByTestId('tweetButton').hover({ linger: 1000 })
   await dom.getByTestId('tweetButton').annotate('😇', { position: 'above' })
-}, 60_000)
+})

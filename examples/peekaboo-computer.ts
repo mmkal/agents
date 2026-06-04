@@ -347,6 +347,7 @@ type PeekabooDomParent = PeekabooLocatorParent & {
     options: NormalizedDomAnnotationOptions,
   ): Promise<void>
   executeChromeJavaScript<Result>(source: string): Promise<Result>
+  type(text: string, options?: TypeOptions): Promise<void>
 }
 
 export class PeekabooComputer
@@ -2342,6 +2343,11 @@ class PeekabooDomLocator<TElement extends HTMLElement = HTMLElement> {
         await this.parent.sleep(100)
       },
     )
+  }
+
+  async type(text: string, options?: TypeOptions) {
+    await this.click()
+    await this.parent.type(text, options)
   }
 
   async evaluate<Result>(
