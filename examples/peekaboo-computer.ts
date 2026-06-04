@@ -47,7 +47,7 @@ type ClickTarget = {
 }
 
 type GuardedActionOptions = {
-  updatesMousePosition: boolean
+  updatesUserActionState: boolean
 }
 
 type MousePosition = {
@@ -55,9 +55,17 @@ type MousePosition = {
   y: number
 }
 
-type MouseMovedEvent = {
-  actual: MousePosition
-  expected: MousePosition
+type UserActionState = {
+  foregroundApp: string
+  mousePosition: MousePosition
+}
+
+type UserActionChange = 'foregroundApp' | 'mousePosition'
+
+type UserActionChangedEvent = {
+  actual: UserActionState
+  changes: UserActionChange[]
+  expected: UserActionState
   location: string
 }
 
@@ -326,8 +334,9 @@ type PeekabooSeeResult = {
 
 type PeekabooCommandParent = {
   exec: ComputerExec
-  acceptCurrentMousePosition(): Promise<void>
-  expectedMousePosition(): MousePosition | undefined
+  acceptCurrentUserActionState(): Promise<void>
+  assertUserActionStill(location: string): Promise<void>
+  expectedUserActionState(): UserActionState | undefined
   guardedAction<T>(
     name: string,
     options: GuardedActionOptions,
@@ -379,7 +388,7 @@ type PeekabooDomParent = PeekabooLocatorParent & {
   type(text: string, options?: TypeOptions): Promise<void>
 }
 
-type PeekabooMouseGuardParent = {
+type PeekabooUserActionGuardParent = {
   exec: ComputerExec
   deadAir<T>(action: () => Promise<T>): Promise<T>
 }
@@ -392,7 +401,7 @@ export class PeekabooComputer
   directory: string
   exec: ComputerExec
   parentDirectory: string
-  private mouseGuard: PeekabooMouseGuard
+  private userActionGuard: PeekabooUserActionGuard
   private screenBounds?: ScreenBounds
   private screenCaptureIndex = 0
   private stepId = 0
@@ -432,7 +441,7 @@ export class PeekabooComputer
         ? this.directory
         : process.cwd(),
     )
-    this.mouseGuard = new PeekabooMouseGuard(this, { tolerancePixels: 8 })
+    this.userActionGuard = new PeekabooUserActionGuard(this, { tolerancePixels: 8 })
   }
 
   async [Symbol.asyncDispose]() {
@@ -483,24 +492,28 @@ export class PeekabooComputer
     options: GuardedActionOptions,
     action: () => Promise<T>,
   ) {
-    await this.mouseGuard.assertStill(`before ${name}`)
+    await this.userActionGuard.assertStill(`before ${name}`)
     const result = await action()
 
-    if (options.updatesMousePosition) {
-      await this.mouseGuard.acceptCurrentPosition()
+    if (options.updatesUserActionState) {
+      await this.userActionGuard.acceptCurrentState()
     } else {
-      await this.mouseGuard.assertStill(`after ${name}`)
+      await this.userActionGuard.assertStill(`after ${name}`)
     }
 
     return result
   }
 
-  async acceptCurrentMousePosition() {
-    await this.mouseGuard.acceptCurrentPosition()
+  async assertUserActionStill(location: string) {
+    await this.userActionGuard.assertStill(location)
   }
 
-  expectedMousePosition() {
-    return this.mouseGuard.expectedMousePosition()
+  async acceptCurrentUserActionState() {
+    await this.userActionGuard.acceptCurrentState()
+  }
+
+  expectedUserActionState() {
+    return this.userActionGuard.expectedState()
   }
 
   async open(
@@ -510,7 +523,7 @@ export class PeekabooComputer
       waitUntilReady: boolean
     },
   ) {
-    return await this.guardedAction('open', { updatesMousePosition: false }, async () => {
+    return await this.guardedAction('open', { updatesUserActionState: true }, async () => {
       const windowTitle = basename(this.directory)
       const waitFlag = options.waitUntilReady ? '--wait-until-ready' : ''
       const resolvedTarget = this.resolvePath(target)
@@ -557,7 +570,7 @@ export class PeekabooComputer
       windowTitle?: string
     },
   ) {
-    return await this.guardedAction('open external', { updatesMousePosition: true }, async () => {
+    return await this.guardedAction('open external', { updatesUserActionState: true }, async () => {
       const previousWindowIds = new Set(
         (await listPeekabooWindows(this, options.app)).map((window) => window.window_id),
       )
@@ -589,7 +602,7 @@ export class PeekabooComputer
   async permissions() {
     return await this.guardedAction(
       'permissions',
-      { updatesMousePosition: false },
+      { updatesUserActionState: false },
       async () => {
         const result = await this.exec`peekaboo permissions --json`
         return JSON.parse(result.stdout)
@@ -914,7 +927,7 @@ class PeekabooMenuBarLocator {
 
     await this.parent.guardedAction(
       `menubar.click ${this.path}`,
-      { updatesMousePosition: true },
+      { updatesUserActionState: true },
       async () => {
         const screen = await this.parent.primaryScreenBounds()
         let searchRegion = await this.parent.topMenuBarRegion()
@@ -970,7 +983,7 @@ class PeekabooWindow implements AsyncDisposable, PeekabooOcrParent {
   private clipboardSlot: string
   private closeOnDispose: boolean
   private directory: string
-  private mouseGuard: PeekabooMouseGuard
+  private userActionGuard: PeekabooUserActionGuard
   private ocrCaptureIndex = 0
   private parent: PeekabooCommandParent
   private seeCaptureIndex = 0
@@ -996,7 +1009,7 @@ class PeekabooWindow implements AsyncDisposable, PeekabooOcrParent {
     this.parent = options.parent
     this.windowBounds = options.windowBounds
     this.windowId = options.windowId
-    this.mouseGuard = new PeekabooMouseGuard(this, { tolerancePixels: 2 })
+    this.userActionGuard = new PeekabooUserActionGuard(this, { tolerancePixels: 2 })
   }
 
   get exec(): ComputerExec {
@@ -1017,7 +1030,7 @@ class PeekabooWindow implements AsyncDisposable, PeekabooOcrParent {
   async click(target: ClickTarget) {
     await this.guardedAction(
       'click',
-      { updatesMousePosition: true },
+      { updatesUserActionState: true },
       async () => {
         await this.focus()
         await this.exec`peekaboo click --coords ${target.coords} ${raw(this.targetFlags())} --no-auto-focus`
@@ -1062,7 +1075,7 @@ class PeekabooWindow implements AsyncDisposable, PeekabooOcrParent {
     for (const keys of [keyses].flat()) {
       await this.guardedAction(
         `hotkey ${keys}`,
-        { updatesMousePosition: false },
+        { updatesUserActionState: false },
         async () => {
           await this.exec`peekaboo hotkey ${keys} ${raw(targetFlags)} ${raw(
             options.noAutoFocus ? '--no-auto-focus' : '',
@@ -1083,7 +1096,7 @@ class PeekabooWindow implements AsyncDisposable, PeekabooOcrParent {
 
     await this.guardedAction(
       `press ${keys}`,
-      { updatesMousePosition: false },
+      { updatesUserActionState: false },
       async () => {
         await this.exec`peekaboo press ${keys} ${raw(targetFlags)} ${raw(
           options.noAutoFocus ? '--no-auto-focus' : '',
@@ -1105,7 +1118,7 @@ class PeekabooWindow implements AsyncDisposable, PeekabooOcrParent {
 
     await this.guardedAction(
       `scroll ${direction}`,
-      { updatesMousePosition: false },
+      { updatesUserActionState: false },
       async () => {
         const scriptPath = await this.focusedScrollScriptPath()
         const delay = options.delay === undefined ? 8 : options.delay
@@ -1379,7 +1392,7 @@ class PeekabooWindow implements AsyncDisposable, PeekabooOcrParent {
 
     await this.guardedAction(
       'type',
-      { updatesMousePosition: true },
+      { updatesUserActionState: true },
       async () => {
         await this.exec({ timeout: (text.length * options.delay) + 5000 })`peekaboo type --text ${text} ${raw(targetFlags)} --profile ${raw(options.profile)} --delay ${raw(String(options.delay))} ${raw(
           options.noAutoFocus ? '--no-auto-focus' : '',
@@ -1396,7 +1409,7 @@ class PeekabooWindow implements AsyncDisposable, PeekabooOcrParent {
 
     await this.guardedAction(
       'paste',
-      { updatesMousePosition: false },
+      { updatesUserActionState: false },
       async () => {
         await this.exec`peekaboo clipboard save --slot ${this.clipboardSlot}`
 
@@ -1426,31 +1439,42 @@ class PeekabooWindow implements AsyncDisposable, PeekabooOcrParent {
     options: GuardedActionOptions,
     action: () => Promise<T>,
   ) {
-    const parentExpectedPosition = this.parent.expectedMousePosition()
+    const parentExpectedState = this.parent.expectedUserActionState()
 
-    if (parentExpectedPosition) {
-      this.mouseGuard.acceptPosition(parentExpectedPosition)
+    if (parentExpectedState) {
+      this.userActionGuard.acceptState(parentExpectedState)
     }
 
-    await this.mouseGuard.assertStill(`before ${name}`)
+    await this.userActionGuard.assertStill(`before ${name}`)
     const result = await action()
 
-    if (options.updatesMousePosition) {
-      await this.mouseGuard.acceptCurrentPosition()
+    if (options.updatesUserActionState) {
+      await this.userActionGuard.acceptCurrentState()
     } else {
-      await this.mouseGuard.assertStill(`after ${name}`)
+      await this.userActionGuard.assertStill(`after ${name}`)
     }
 
-    await this.parent.acceptCurrentMousePosition()
+    await this.parent.acceptCurrentUserActionState()
     return result
   }
 
-  async acceptCurrentMousePosition() {
-    await this.mouseGuard.acceptCurrentPosition()
+  async assertUserActionStill(location: string) {
+    const parentExpectedState = this.parent.expectedUserActionState()
+
+    if (parentExpectedState) {
+      this.userActionGuard.acceptState(parentExpectedState)
+    }
+
+    await this.userActionGuard.assertStill(location)
+    await this.parent.acceptCurrentUserActionState()
   }
 
-  expectedMousePosition() {
-    return this.mouseGuard.expectedMousePosition()
+  async acceptCurrentUserActionState() {
+    await this.userActionGuard.acceptCurrentState()
+  }
+
+  expectedUserActionState() {
+    return this.userActionGuard.expectedState()
   }
 
   recordAutozoomPoint(
@@ -2284,7 +2308,7 @@ class PeekabooLocator {
   async dblclick() {
     await this.parent.guardedAction(
       'dblclick',
-      { updatesMousePosition: true },
+      { updatesUserActionState: true },
       async () => {
         await this.parent.focus()
         await this.parent.exec`peekaboo click --coords ${this.target.coords} ${raw(this.parent.targetFlags())} --double --no-auto-focus`
@@ -2321,7 +2345,7 @@ class PeekabooSeeLocator {
   async click() {
     await this.parent.guardedAction(
       'see.click',
-      { updatesMousePosition: true },
+      { updatesUserActionState: true },
       async () => {
         const { element } = await this.resolve()
 
@@ -2336,7 +2360,7 @@ class PeekabooSeeLocator {
   async hover({ linger = 100 } = {}) {
     await this.parent.guardedAction(
       'see.hover',
-      { updatesMousePosition: true },
+      { updatesUserActionState: true },
       async () => {
         const { element } = await this.resolve()
 
@@ -2383,7 +2407,7 @@ class PeekabooDom {
   ): Promise<Awaited<Result>> {
     return await this.parent.guardedAction(
       'dom.evaluate',
-      { updatesMousePosition: false },
+      { updatesUserActionState: false },
       async () => {
         const fnSource = fn.toString()
         const source = [
@@ -2402,7 +2426,7 @@ class PeekabooDom {
   async goto(url: string) {
     await this.parent.guardedAction(
       'dom.goto',
-      { updatesMousePosition: false },
+      { updatesUserActionState: false },
       async () => {
         const source = [
           '(() => {',
@@ -2476,7 +2500,7 @@ class PeekabooDomLocator<TElement extends HTMLElement = HTMLElement> {
   async annotate(text: string, options: DomAnnotationOptions = {}) {
     await this.parent.guardedAction(
       'dom.annotate',
-      { updatesMousePosition: false },
+      { updatesUserActionState: false },
       async () => {
         const normalizedOptions = normalizeDomAnnotationOptions(text, options)
         const annotationId = `peekaboo-dom-annotation-${Date.now()}-${Math.random().toString(16).slice(2)}`
@@ -2658,7 +2682,7 @@ class PeekabooDomLocator<TElement extends HTMLElement = HTMLElement> {
   async click() {
     await this.parent.guardedAction(
       'dom.click',
-      { updatesMousePosition: true },
+      { updatesUserActionState: true },
       async () => {
         await this.parent.focus()
         const bounds = (await this.waitForInfo({ timeout: 5_000 })).screenBounds
@@ -2682,7 +2706,7 @@ class PeekabooDomLocator<TElement extends HTMLElement = HTMLElement> {
   ): Promise<Awaited<Result>> {
     return await this.parent.guardedAction(
       'dom.evaluate',
-      { updatesMousePosition: false },
+      { updatesUserActionState: false },
       async () => await this.evaluateNow(fn, args),
     )
   }
@@ -2690,7 +2714,7 @@ class PeekabooDomLocator<TElement extends HTMLElement = HTMLElement> {
   async hover({ linger = 100 } = {}) {
     await this.parent.guardedAction(
       'dom.hover',
-      { updatesMousePosition: true },
+      { updatesUserActionState: true },
       async () => {
         await this.parent.focus()
         const bounds = await this.resolveScreenBounds()
@@ -2706,7 +2730,7 @@ class PeekabooDomLocator<TElement extends HTMLElement = HTMLElement> {
   async info(): Promise<DomElementInfo> {
     return await this.parent.guardedAction(
       'dom.info',
-      { updatesMousePosition: false },
+      { updatesUserActionState: false },
       async () => {
         const info = await this.resolveInfo()
         return {
@@ -2721,7 +2745,7 @@ class PeekabooDomLocator<TElement extends HTMLElement = HTMLElement> {
   async waitFor(options: { timeout?: number } = {}) {
     await this.parent.guardedAction(
       'dom.waitFor',
-      { updatesMousePosition: false },
+      { updatesUserActionState: false },
       async () => {
         await this.waitForInfo({ timeout: options.timeout || 5_000 })
       },
@@ -2731,7 +2755,7 @@ class PeekabooDomLocator<TElement extends HTMLElement = HTMLElement> {
   async screenBounds(): Promise<ScreenBounds> {
     return await this.parent.guardedAction(
       'dom.screenBounds',
-      { updatesMousePosition: false },
+      { updatesUserActionState: false },
       async () => roundScreenBounds(await this.resolveScreenBounds()),
     )
   }
@@ -2739,7 +2763,7 @@ class PeekabooDomLocator<TElement extends HTMLElement = HTMLElement> {
   async screenCoordinates(): Promise<ScreenCoordinates> {
     return await this.parent.guardedAction(
       'dom.screenCoordinates',
-      { updatesMousePosition: false },
+      { updatesUserActionState: false },
       async () => centerOfScreenBounds(await this.resolveScreenBounds()),
     )
   }
@@ -2751,7 +2775,7 @@ class PeekabooDomLocator<TElement extends HTMLElement = HTMLElement> {
   private async callProxyMethod(property: string, args: any[]) {
     return await this.parent.guardedAction(
       `dom.proxy.${property}`,
-      { updatesMousePosition: false },
+      { updatesUserActionState: false },
       async () =>
         await this.evaluateNow(
           (element: any, method: string, methodArgs: any[]) =>
@@ -2815,7 +2839,7 @@ function domElementMatchesLocatorOptions(element, options) {
   private async getProxyProperty(property: string) {
     return await this.parent.guardedAction(
       `dom.proxy.${property}`,
-      { updatesMousePosition: false },
+      { updatesUserActionState: false },
       async () =>
         await this.evaluateNow(
           (element: any, key: string) => element[key],
@@ -2902,6 +2926,8 @@ function domElementMatchesLocatorOptions(element, options) {
     let textChangedSinceDeadline = false
 
     while (true) {
+      await this.parent.assertUserActionStill('during dom.waitFor')
+
       try {
         return await this.resolveInfo()
       } catch (error) {
@@ -2957,7 +2983,7 @@ function domElementMatchesLocatorOptions(element, options) {
   private async setProxyProperty(property: string, value: any) {
     await this.parent.guardedAction(
       `dom.proxy.${property}`,
-      { updatesMousePosition: false },
+      { updatesUserActionState: false },
       async () => {
         await this.evaluateNow(
           (element: any, key: string, nextValue: any) => {
@@ -2997,7 +3023,7 @@ class PeekabooOcrLocator {
   async click(position: OcrClickPosition = 'center') {
     await this.parent.guardedAction(
       'ocr.click',
-      { updatesMousePosition: true },
+      { updatesUserActionState: true },
       async () => {
         const coords = await this.screenCoordinates(position)
         await this.parent.focus()
@@ -3015,7 +3041,7 @@ class PeekabooOcrLocator {
 
     await this.parent.guardedAction(
       'ocr.highlight',
-      { updatesMousePosition: true },
+      { updatesUserActionState: true },
       async () => {
         const bounds = await this.screenBounds()
         const from = screenCoordinatesForOcrPosition(bounds, 'start')
@@ -3052,7 +3078,7 @@ class PeekabooOcrLocator {
   async dblclick(position: OcrClickPosition = 'center') {
     await this.parent.guardedAction(
       'ocr.dblclick',
-      { updatesMousePosition: true },
+      { updatesUserActionState: true },
       async () => {
         const coords = await this.screenCoordinates(position)
 
@@ -3067,7 +3093,7 @@ class PeekabooOcrLocator {
   async hover({ linger = 100 } = {}) {
     return this.parent.guardedAction(
       'ocr.hover',
-      { updatesMousePosition: true },
+      { updatesUserActionState: true },
       async () => {
         const coords = await this.screenCoordinates()
 
@@ -3143,7 +3169,7 @@ class PeekabooOcrLocator {
   async select() {
     await this.parent.guardedAction(
       'ocr.select',
-      { updatesMousePosition: true },
+      { updatesUserActionState: true },
       async () => {
         const bounds = await this.screenBounds()
         const from = coordsString({
@@ -3167,7 +3193,7 @@ class PeekabooOcrLocator {
   async waitFor(options: { timeout?: number } = {}) {
     return await this.parent.guardedAction(
       'ocr.waitFor',
-      { updatesMousePosition: false },
+      { updatesUserActionState: false },
       async () => {
         this.match = undefined
         await this.waitForMatch({ timeout: options.timeout || 5_000 })
@@ -3190,6 +3216,8 @@ class PeekabooOcrLocator {
       let lastError: unknown
 
       while (Date.now() < deadline) {
+        await this.parent.assertUserActionStill('during ocr.waitFor')
+
         try {
           this.match = await this.findMatchOnce()
           return this.match
@@ -3219,67 +3247,70 @@ class PeekabooOcrLocator {
   }
 }
 
-class PeekabooMouseMovedError extends Error {
-  constructor(event: MouseMovedEvent, message: string) {
+class PeekabooUserActionInterruptedError extends Error {
+  constructor(event: UserActionChangedEvent, message: string) {
     super(
       [
-        `Mouse moved ${event.location}. ${message}`,
-        `Expected ${formatMousePosition(event.expected)} but saw ${formatMousePosition(event.actual)}.`,
+        `User action changed ${event.location}. ${message}`,
+        ...formatUserActionChanges(event),
       ].join(' '),
     )
-    this.name = 'PeekabooMouseMovedError'
+    this.name = 'PeekabooUserActionInterruptedError'
   }
 }
 
-class PeekabooMouseGuard {
-  private expectedPosition?: MousePosition
-  private parent: PeekabooMouseGuardParent
+class PeekabooUserActionGuard {
+  private expected?: UserActionState
+  private parent: PeekabooUserActionGuardParent
   private tolerancePixels: number
 
-  constructor(parent: PeekabooMouseGuardParent, options: { tolerancePixels: number }) {
+  constructor(parent: PeekabooUserActionGuardParent, options: { tolerancePixels: number }) {
     this.parent = parent
     this.tolerancePixels = options.tolerancePixels
   }
 
-  async acceptCurrentPosition() {
-    this.expectedPosition = await readSystemMousePosition(this.parent.exec)
+  async acceptCurrentState() {
+    this.expected = await readSystemUserActionState(this.parent.exec)
   }
 
-  acceptPosition(position: MousePosition) {
-    this.expectedPosition = { ...position }
+  acceptState(state: UserActionState) {
+    this.expected = cloneUserActionState(state)
   }
 
-  expectedMousePosition() {
-    return this.expectedPosition ? { ...this.expectedPosition } : undefined
+  expectedState() {
+    return this.expected ? cloneUserActionState(this.expected) : undefined
   }
 
   async assertStill(location: string) {
-    const actual = await readSystemMousePosition(this.parent.exec)
+    const actual = await readSystemUserActionState(this.parent.exec)
 
-    if (!this.expectedPosition) {
-      this.expectedPosition = actual
+    if (!this.expected) {
+      this.expected = actual
       return
     }
 
-    if (mousePositionsMatch(actual, this.expectedPosition, this.tolerancePixels)) {
+    const changes = userActionChanges(actual, this.expected, this.tolerancePixels)
+
+    if (changes.length === 0) {
       return
     }
 
     const event = {
       actual,
-      expected: this.expectedPosition,
+      changes,
+      expected: this.expected,
       location,
     }
 
     await this.parent.deadAir(async () => {
-      const action = await waitForMouseMovedDialog(event)
+      const action = await waitForUserActionChangedDialog(event)
 
-      if (action === 'fail') throw new PeekabooMouseMovedError(event, 'User explicitly requested failure')
+      if (action === 'fail') throw new PeekabooUserActionInterruptedError(event, 'User explicitly requested failure')
 
       await sleep(100)
-      await moveSystemMousePosition(this.parent.exec, event.expected)
+      await restoreSystemUserActionState(this.parent.exec, event)
     })
-    this.expectedPosition = event.expected
+    this.expected = cloneUserActionState(event.expected)
   }
 }
 
@@ -3691,8 +3722,63 @@ async function readSystemMousePosition(exec: ComputerExec) {
   }
 }
 
+async function readSystemForegroundApp(exec: ComputerExec) {
+  const script = 'tell application "System Events" to get name of first application process whose frontmost is true'
+  const result = await exec`osascript -e ${script}`
+  return result.stdout.trim()
+}
+
+async function readSystemUserActionState(exec: ComputerExec): Promise<UserActionState> {
+  const [foregroundApp, mousePosition] = await Promise.all([
+    readSystemForegroundApp(exec),
+    readSystemMousePosition(exec),
+  ])
+
+  return {
+    foregroundApp,
+    mousePosition,
+  }
+}
+
 async function moveSystemMousePosition(exec: ComputerExec, position: MousePosition) {
   await exec`cliclick ${raw(`m:${formatMousePosition(position)}`)}`
+}
+
+async function activateForegroundApp(exec: ComputerExec, app: string) {
+  await exec`osascript -e ${`tell application ${appleScriptString(app)} to activate`}`
+}
+
+async function restoreSystemUserActionState(exec: ComputerExec, event: UserActionChangedEvent) {
+  await activateForegroundApp(exec, event.expected.foregroundApp)
+
+  await moveSystemMousePosition(exec, event.expected.mousePosition)
+}
+
+function cloneUserActionState(state: UserActionState): UserActionState {
+  return {
+    foregroundApp: state.foregroundApp,
+    mousePosition: {
+      ...state.mousePosition,
+    },
+  }
+}
+
+function userActionChanges(
+  actual: UserActionState,
+  expected: UserActionState,
+  tolerancePixels: number,
+): UserActionChange[] {
+  const changes: UserActionChange[] = []
+
+  if (!mousePositionsMatch(actual.mousePosition, expected.mousePosition, tolerancePixels)) {
+    changes.push('mousePosition')
+  }
+
+  if (actual.foregroundApp !== expected.foregroundApp) {
+    changes.push('foregroundApp')
+  }
+
+  return changes
 }
 
 function mousePositionsMatch(
@@ -3710,8 +3796,26 @@ function formatMousePosition(position: MousePosition) {
   return `${position.x},${position.y}`
 }
 
-async function waitForMouseMovedDialog(
-  event: MouseMovedEvent,
+function formatUserActionChanges(event: UserActionChangedEvent) {
+  const lines: string[] = []
+
+  if (event.changes.includes('mousePosition')) {
+    lines.push(
+      `Expected mouse ${formatMousePosition(event.expected.mousePosition)} but saw ${formatMousePosition(event.actual.mousePosition)}.`,
+    )
+  }
+
+  if (event.changes.includes('foregroundApp')) {
+    lines.push(
+      `Expected foreground app ${JSON.stringify(event.expected.foregroundApp)} but saw ${JSON.stringify(event.actual.foregroundApp)}.`,
+    )
+  }
+
+  return lines
+}
+
+async function waitForUserActionChangedDialog(
+  event: UserActionChangedEvent,
 ): Promise<'continue' | 'fail'> {
   const { promise, resolve } = Promise.withResolvers<'continue' | 'fail'>()
   const child = spawn('osascript', [
@@ -3720,17 +3824,16 @@ async function waitForMouseMovedDialog(
       'display dialog',
       JSON.stringify(
         [
-          'Mouse moved; the script is paused.',
+          'User action changed; the script is paused.',
           '',
           `Location: ${event.location}`,
-          `Expected: ${formatMousePosition(event.expected)}`,
-          `Actual: ${formatMousePosition(event.actual)}`,
+          ...formatUserActionChanges(event),
           '',
-          'Continue script will restore the mouse position and resume.',
+          'Continue script will restore the expected app and mouse position, then resume.',
         ].join('\n'),
       ),
       'buttons {"Continue script", "Fail script"} default button "Continue script" with icon caution',
-      'with title "Peekaboo mouse guard"',
+      'with title "Peekaboo user action guard"',
     ].join(' '),
   ], {
     stdio: ['ignore', 'pipe', 'ignore'],
@@ -3738,7 +3841,7 @@ async function waitForMouseMovedDialog(
   let stdout = ''
 
   if (child.pid) {
-    void moveMouseMovedDialogToTopLeft(child.pid)
+    void moveUserActionDialogToTopLeft(child.pid)
   }
 
   child.stdout.on('data', (chunk) => {
@@ -3746,7 +3849,7 @@ async function waitForMouseMovedDialog(
   })
   child.on('error', () => resolve('fail'))
   child.on('exit', (code) => {
-    if (code === 0 && stdout.includes('button returned:Continue test')) {
+    if (code === 0 && stdout.includes('button returned:Continue script')) {
       resolve('continue')
       return
     }
@@ -3756,7 +3859,7 @@ async function waitForMouseMovedDialog(
   return await promise
 }
 
-async function moveMouseMovedDialogToTopLeft(processId: number) {
+async function moveUserActionDialogToTopLeft(processId: number) {
   await sleep(150)
   const { promise, resolve } = Promise.withResolvers<void>()
   const child = spawn('osascript', [
