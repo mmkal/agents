@@ -379,6 +379,11 @@ type PeekabooDomParent = PeekabooLocatorParent & {
   type(text: string, options?: TypeOptions): Promise<void>
 }
 
+type PeekabooMouseGuardParent = {
+  exec: ComputerExec
+  deadAir<T>(action: () => Promise<T>): Promise<T>
+}
+
 export class PeekabooComputer
   extends EventEmitter
   implements AsyncDisposable, PeekabooOcrParent
@@ -387,7 +392,7 @@ export class PeekabooComputer
   directory: string
   exec: ComputerExec
   parentDirectory: string
-  private mouseGuard: PeekabooThrowingMouseGuard
+  private mouseGuard: PeekabooMouseGuard
   private screenBounds?: ScreenBounds
   private screenCaptureIndex = 0
   private stepId = 0
@@ -427,7 +432,7 @@ export class PeekabooComputer
         ? this.directory
         : process.cwd(),
     )
-    this.mouseGuard = new PeekabooThrowingMouseGuard({ exec: this.exec })
+    this.mouseGuard = new PeekabooMouseGuard(this, { tolerancePixels: 8 })
   }
 
   async [Symbol.asyncDispose]() {
@@ -991,10 +996,7 @@ class PeekabooWindow implements AsyncDisposable, PeekabooOcrParent {
     this.parent = options.parent
     this.windowBounds = options.windowBounds
     this.windowId = options.windowId
-    this.mouseGuard = new PeekabooMouseGuard({
-      deadAir: (action) => this.deadAir(action),
-      exec: this.exec,
-    })
+    this.mouseGuard = new PeekabooMouseGuard(this, { tolerancePixels: 2 })
   }
 
   get exec(): ComputerExec {
@@ -3218,10 +3220,10 @@ class PeekabooOcrLocator {
 }
 
 class PeekabooMouseMovedError extends Error {
-  constructor(event: MouseMovedEvent) {
+  constructor(event: MouseMovedEvent, message: string) {
     super(
       [
-        `Mouse moved ${event.location}.`,
+        `Mouse moved ${event.location}. ${message}`,
         `Expected ${formatMousePosition(event.expected)} but saw ${formatMousePosition(event.actual)}.`,
       ].join(' '),
     )
@@ -3229,63 +3231,18 @@ class PeekabooMouseMovedError extends Error {
   }
 }
 
-class PeekabooThrowingMouseGuard {
-  private exec: ComputerExec
-  private expectedPosition?: MousePosition
-  private tolerancePixels = 8
-
-  constructor(options: { exec: ComputerExec }) {
-    this.exec = options.exec
-  }
-
-  async acceptCurrentPosition() {
-    this.expectedPosition = await readSystemMousePosition(this.exec)
-  }
-
-  acceptPosition(position: MousePosition) {
-    this.expectedPosition = { ...position }
-  }
-
-  expectedMousePosition() {
-    return this.expectedPosition ? { ...this.expectedPosition } : undefined
-  }
-
-  async assertStill(location: string) {
-    const actual = await readSystemMousePosition(this.exec)
-
-    if (!this.expectedPosition) {
-      this.expectedPosition = actual
-      return
-    }
-
-    if (mousePositionsMatch(actual, this.expectedPosition, this.tolerancePixels)) {
-      return
-    }
-
-    throw new PeekabooMouseMovedError({
-      actual,
-      expected: this.expectedPosition,
-      location,
-    })
-  }
-}
-
 class PeekabooMouseGuard {
-  private deadAir: <T>(action: () => Promise<T>) => Promise<T>
-  private exec: ComputerExec
   private expectedPosition?: MousePosition
-  private tolerancePixels = 2
+  private parent: PeekabooMouseGuardParent
+  private tolerancePixels: number
 
-  constructor(options: {
-    deadAir: <T>(action: () => Promise<T>) => Promise<T>
-    exec: ComputerExec
-  }) {
-    this.deadAir = options.deadAir
-    this.exec = options.exec
+  constructor(parent: PeekabooMouseGuardParent, options: { tolerancePixels: number }) {
+    this.parent = parent
+    this.tolerancePixels = options.tolerancePixels
   }
 
   async acceptCurrentPosition() {
-    this.expectedPosition = await readSystemMousePosition(this.exec)
+    this.expectedPosition = await readSystemMousePosition(this.parent.exec)
   }
 
   acceptPosition(position: MousePosition) {
@@ -3297,7 +3254,7 @@ class PeekabooMouseGuard {
   }
 
   async assertStill(location: string) {
-    const actual = await readSystemMousePosition(this.exec)
+    const actual = await readSystemMousePosition(this.parent.exec)
 
     if (!this.expectedPosition) {
       this.expectedPosition = actual
@@ -3314,13 +3271,13 @@ class PeekabooMouseGuard {
       location,
     }
 
-    await this.deadAir(async () => {
+    await this.parent.deadAir(async () => {
       const action = await waitForMouseMovedDialog(event)
 
-      if (action === 'fail') throw new PeekabooMouseMovedError(event)
+      if (action === 'fail') throw new PeekabooMouseMovedError(event, 'User explicitly requested failure')
 
       await sleep(100)
-      await moveSystemMousePosition(this.exec, event.expected)
+      await moveSystemMousePosition(this.parent.exec, event.expected)
     })
     this.expectedPosition = event.expected
   }
@@ -3763,16 +3720,16 @@ async function waitForMouseMovedDialog(
       'display dialog',
       JSON.stringify(
         [
-          'Mouse moved; the test is paused.',
+          'Mouse moved; the script is paused.',
           '',
           `Location: ${event.location}`,
           `Expected: ${formatMousePosition(event.expected)}`,
           `Actual: ${formatMousePosition(event.actual)}`,
           '',
-          'Continue test will restore the mouse position and resume.',
+          'Continue script will restore the mouse position and resume.',
         ].join('\n'),
       ),
-      'buttons {"Continue test", "Fail test"} default button "Continue test" with icon caution',
+      'buttons {"Continue script", "Fail script"} default button "Continue script" with icon caution',
       'with title "Peekaboo mouse guard"',
     ].join(' '),
   ], {

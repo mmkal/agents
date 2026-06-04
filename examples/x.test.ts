@@ -23,8 +23,7 @@ test('draft an X post', async () => {
   const dom = x.dom()
 
   await dom.getByTestId('SideNav_NewTweet_Button').click()
-  await dom.getByTestId('tweetTextarea_0').type(postDraft, {delay: -1})
-  await dom.getByTestId('tweetButton').annotate('😇', { position: 'above', linger: 1000 })
+  await dom.getByTestId('tweetTextarea_0').type(postDraft)
   await dom.getByLabel('Add photos or video').click()
 
   await x.hotkey('cmd,shift,g', { noAutoFocus: true })
