@@ -331,6 +331,15 @@ type PeekabooOcrParent = PeekabooLocatorParent & {
   type(text: string, options?: TypeOptions): Promise<void>
 }
 
+type PeekabooMenuBarParent = PeekabooCommandParent & {
+  findOcrMatchInScreenRegion(
+    region: ScreenBounds,
+    options: OcrMatchOptions,
+  ): Promise<OcrMatchResult>
+  primaryScreenBounds(): Promise<ScreenBounds>
+  topMenuBarRegion(): Promise<ScreenBounds>
+}
+
 type PeekabooDomParent = PeekabooLocatorParent & {
   annotateScreenText(
     text: string,
@@ -349,6 +358,8 @@ export class PeekabooComputer
   exec: ComputerExec
   parentDirectory: string
   private mouseGuard: PeekabooThrowingMouseGuard
+  private screenBounds?: ScreenBounds
+  private screenCaptureIndex = 0
   private stepId = 0
 
   static async create(testState: {currentTestName?: string}) {
@@ -547,6 +558,56 @@ export class PeekabooComputer
     )
   }
 
+  menubar(path: string) {
+    return new PeekabooMenuBarLocator({
+      parent: this,
+      path,
+    })
+  }
+
+  async primaryScreenBounds(): Promise<ScreenBounds> {
+    if (this.screenBounds) {
+      return this.screenBounds
+    }
+
+    this.screenCaptureIndex += 1
+    const imagePath = join(
+      this.assetsDirectory,
+      `screen-${this.screenCaptureIndex}-${Date.now()}.png`,
+    )
+    const result = await this.exec`peekaboo image --mode screen --path ${imagePath} --format png --json`
+    this.screenBounds = peekabooImageLogicalBounds(result.stdout)
+
+    return this.screenBounds
+  }
+
+  async topMenuBarRegion(): Promise<ScreenBounds> {
+    const screen = await this.primaryScreenBounds()
+
+    return {
+      height: Math.min(50, screen.height),
+      relativeTo: 'screen',
+      width: screen.width,
+      x: screen.x,
+      y: screen.y,
+    }
+  }
+
+  async findOcrMatchInScreenRegion(
+    region: ScreenBounds,
+    options: OcrMatchOptions,
+  ): Promise<OcrMatchResult> {
+    const imagePath = await this.captureScreenRegionImage(region)
+
+    return await findOcrMatchInCapturedImage({
+      captureBounds: region,
+      exec: this.exec,
+      imagePath,
+      options,
+      scriptPath: await writeVisionOcrScript(this.assetsDirectory),
+    })
+  }
+
   async readFile(path: string) {
     return await fs.readFile(this.resolvePath(path), 'utf8')
   }
@@ -600,8 +661,93 @@ export class PeekabooComputer
     return ''
   }
 
+  private async captureScreenRegionImage(region: ScreenBounds) {
+    this.screenCaptureIndex += 1
+    const imagePath = join(
+      this.assetsDirectory,
+      `screen-region-${this.screenCaptureIndex}-${Date.now()}.png`,
+    )
+    const captureRegion = [
+      Math.round(region.x),
+      Math.round(region.y),
+      Math.round(region.width),
+      Math.round(region.height),
+    ].join(',')
+
+    await this.exec`peekaboo image --mode area --region ${captureRegion} --path ${imagePath} --format png --json`
+
+    return imagePath
+  }
+
   private resolvePath(path: string) {
     return isAbsolute(path) ? path : join(this.directory, path)
+  }
+}
+
+class PeekabooMenuBarLocator {
+  private parent: PeekabooMenuBarParent
+  private path: string
+
+  constructor(options: {
+    parent: PeekabooMenuBarParent
+    path: string
+  }) {
+    this.parent = options.parent
+    this.path = options.path
+  }
+
+  async click() {
+    const parts = menuBarPathParts(this.path)
+
+    await this.parent.guardedAction(
+      `menubar.click ${this.path}`,
+      { updatesMousePosition: true },
+      async () => {
+        const screen = await this.parent.primaryScreenBounds()
+        let searchRegion = await this.parent.topMenuBarRegion()
+
+        for (let index = 0; index < parts.length; index += 1) {
+          const part = parts[index]
+          const match = await this.parent.findOcrMatchInScreenRegion(
+            searchRegion,
+            { text: part },
+          )
+          const coords = centerOfScreenBounds(match.screenBounds)
+          const isFirst = index === 0
+          const isLast = index === parts.length - 1
+
+          if (isFirst) {
+            await this.clickAt(coords)
+            await this.parent.sleep(250)
+
+            if (isLast) {
+              return
+            }
+
+            searchRegion = menuDropdownRegion(screen, match.screenBounds)
+            continue
+          }
+
+          if (isLast) {
+            await this.clickAt(coords)
+            await this.parent.sleep(100)
+            return
+          }
+
+          await this.hoverAt(coords)
+          await this.parent.sleep(250)
+          searchRegion = submenuRegion(screen, match.screenBounds)
+        }
+      },
+    )
+  }
+
+  private async clickAt(coords: ScreenCoordinates) {
+    await this.parent.exec`peekaboo click --coords ${coordsString(coords)} --global-coords --no-auto-focus`
+  }
+
+  private async hoverAt(coords: ScreenCoordinates) {
+    await this.parent.exec`peekaboo move --coords ${coordsString(coords)} --duration 150 --steps 5 --profile linear --no-auto-focus`
   }
 }
 
@@ -904,68 +1050,13 @@ class PeekabooWindow implements AsyncDisposable, PeekabooOcrParent {
     imagePath: string,
     options: OcrMatchOptions,
   ): Promise<OcrMatchResult> {
-    const scriptPath = await this.visionOcrScriptPath()
-    const result = await this.exec`swift ${scriptPath} ${imagePath} ${options.text} ${options.until || ''} ${options.after || ''} ${options.before || ''}`
-    const payload = JSON.parse(result.stdout)
-    const recognizedText = Array.isArray(payload.recognizedText)
-      ? payload.recognizedText
-      : []
-    const textPositions = Array.isArray(payload.textPositions)
-      ? payload.textPositions
-      : []
-    let matches = filterOcrMatches({
-      after: options.after,
-      before: options.before,
-      matches: Array.isArray(payload.matches) ? payload.matches : [],
-      textPositions,
+    return await findOcrMatchInCapturedImage({
+      captureBounds: this.windowBounds,
+      exec: this.exec,
+      imagePath,
+      options,
+      scriptPath: await this.visionOcrScriptPath(),
     })
-    matches = extendOcrMatchesUntil({
-      matches,
-      textPositions,
-      until: options.until,
-    })
-
-    if (matches.length === 0) {
-      throw new Error(
-        [
-          ocrMatchFailureMessage('OCR text not found', options),
-          `OCR screenshot: ${imagePath}`,
-          `Recognized text:`,
-          ...recognizedText.map((text: string) => `- ${text}`),
-        ].join('\n'),
-      )
-    }
-
-    if (matches.length > 1) {
-      throw new Error(
-        [
-          ocrMatchFailureMessage(
-            `OCR text matched ${matches.length} times`,
-            options,
-          ),
-          `OCR screenshot: ${imagePath}`,
-          ...matches.map(
-            (match: any) =>
-              `- ${match.lineText} (${JSON.stringify(match.boundingBox)})`,
-          ),
-        ].join('\n'),
-      )
-    }
-
-    return {
-      image: {
-        ...payload.image,
-        path: imagePath,
-      },
-      match: matches[0],
-      recognizedText,
-      screenBounds: screenBoundsForVisionBox({
-        image: payload.image,
-        visionBox: matches[0].boundingBox,
-        windowBounds: this.windowBounds,
-      }),
-      windowBounds: this.windowBounds,
-    }
   }
 
   async focus() {
@@ -1220,10 +1311,7 @@ class PeekabooWindow implements AsyncDisposable, PeekabooOcrParent {
   }
 
   private async visionOcrScriptPath() {
-    const scriptPath = join(this.assetsDirectory, 'vision-ocr.swift')
-    await fs.mkdir(this.assetsDirectory, { recursive: true })
-    await fs.writeFile(scriptPath, visionOcrSwiftSource)
-    return scriptPath
+    return await writeVisionOcrScript(this.assetsDirectory)
   }
 
   private async focusedScrollScriptPath() {
@@ -2851,6 +2939,179 @@ async function listPeekabooWindows(
   return Array.isArray(payload.data && payload.data.windows)
     ? payload.data.windows
     : []
+}
+
+async function findOcrMatchInCapturedImage(options: {
+  captureBounds: PeekabooBounds
+  exec: ComputerExec
+  imagePath: string
+  options: OcrMatchOptions
+  scriptPath: string
+}): Promise<OcrMatchResult> {
+  const result = await options.exec`swift ${options.scriptPath} ${options.imagePath} ${options.options.text} ${options.options.until || ''} ${options.options.after || ''} ${options.options.before || ''}`
+  const payload = JSON.parse(result.stdout)
+  const recognizedText = Array.isArray(payload.recognizedText)
+    ? payload.recognizedText
+    : []
+  const textPositions = Array.isArray(payload.textPositions)
+    ? payload.textPositions
+    : []
+  let matches = filterOcrMatches({
+    after: options.options.after,
+    before: options.options.before,
+    matches: Array.isArray(payload.matches) ? payload.matches : [],
+    textPositions,
+  })
+  matches = extendOcrMatchesUntil({
+    matches,
+    textPositions,
+    until: options.options.until,
+  })
+
+  if (matches.length === 0) {
+    throw new Error(
+      [
+        ocrMatchFailureMessage('OCR text not found', options.options),
+        `OCR screenshot: ${options.imagePath}`,
+        `Recognized text:`,
+        ...recognizedText.map((text: string) => `- ${text}`),
+      ].join('\n'),
+    )
+  }
+
+  if (matches.length > 1) {
+    throw new Error(
+      [
+        ocrMatchFailureMessage(
+          `OCR text matched ${matches.length} times`,
+          options.options,
+        ),
+        `OCR screenshot: ${options.imagePath}`,
+        ...matches.map(
+          (match: any) =>
+            `- ${match.lineText} (${JSON.stringify(match.boundingBox)})`,
+        ),
+      ].join('\n'),
+    )
+  }
+
+  return {
+    image: {
+      ...payload.image,
+      path: options.imagePath,
+    },
+    match: matches[0],
+    recognizedText,
+    screenBounds: screenBoundsForVisionBox({
+      image: payload.image,
+      visionBox: matches[0].boundingBox,
+      windowBounds: options.captureBounds,
+    }),
+    windowBounds: options.captureBounds,
+  }
+}
+
+async function writeVisionOcrScript(assetsDirectory: string) {
+  const scriptPath = join(assetsDirectory, 'vision-ocr.swift')
+  await fs.mkdir(assetsDirectory, { recursive: true })
+  await fs.writeFile(scriptPath, visionOcrSwiftSource)
+  return scriptPath
+}
+
+function peekabooImageLogicalBounds(stdout: string): ScreenBounds {
+  const payload = JSON.parse(stdout)
+  const observation = payload.data &&
+    Array.isArray(payload.data.observations) &&
+    payload.data.observations[0]
+  const bounds = observation &&
+    observation.coordinates &&
+    observation.coordinates.logical_bounds
+
+  if (!isPeekabooLogicalBounds(bounds)) {
+    throw new Error(`Could not read screen bounds from peekaboo image output: ${stdout}`)
+  }
+
+  return {
+    height: Number(bounds[1][1]),
+    relativeTo: 'screen',
+    width: Number(bounds[1][0]),
+    x: Number(bounds[0][0]),
+    y: Number(bounds[0][1]),
+  }
+}
+
+function isPeekabooLogicalBounds(value: unknown): value is [[number, number], [number, number]] {
+  return (
+    Array.isArray(value) &&
+    Array.isArray(value[0]) &&
+    Array.isArray(value[1]) &&
+    typeof value[0][0] === 'number' &&
+    typeof value[0][1] === 'number' &&
+    typeof value[1][0] === 'number' &&
+    typeof value[1][1] === 'number'
+  )
+}
+
+function menuBarPathParts(path: string) {
+  const parts = path
+    .split(' > ')
+    .map((part) => part.trim())
+    .filter(Boolean)
+
+  if (parts.length === 0) {
+    throw new Error(`Menu bar path must include at least one item: ${JSON.stringify(path)}`)
+  }
+
+  return parts
+}
+
+function menuDropdownRegion(screen: ScreenBounds, menuTitleBounds: ScreenBounds): ScreenBounds {
+  const screenRight = screen.x + screen.width
+  const screenBottom = screen.y + screen.height
+  const x = clampNumber(
+    Math.round(menuTitleBounds.x - 120),
+    screen.x,
+    Math.max(screen.x, screenRight - 640),
+  )
+  const y = clampNumber(
+    Math.round(menuTitleBounds.y + menuTitleBounds.height),
+    screen.y,
+    screenBottom,
+  )
+  const width = Math.min(640, screenRight - x)
+
+  return {
+    height: Math.max(1, screenBottom - y),
+    relativeTo: 'screen',
+    width: Math.max(1, width),
+    x,
+    y,
+  }
+}
+
+function submenuRegion(screen: ScreenBounds, menuItemBounds: ScreenBounds): ScreenBounds {
+  const screenRight = screen.x + screen.width
+  const screenBottom = screen.y + screen.height
+  const x = clampNumber(
+    Math.round(menuItemBounds.x + menuItemBounds.width - 16),
+    screen.x,
+    Math.max(screen.x, screenRight - 1),
+  )
+  const y = clampNumber(
+    Math.round(menuItemBounds.y - 160),
+    screen.y,
+    Math.max(screen.y, screenBottom - 1),
+  )
+  const width = screenRight - x
+  const height = Math.min(720, screenBottom - y)
+
+  return {
+    height: Math.max(1, height),
+    relativeTo: 'screen',
+    width: Math.max(1, width),
+    x,
+    y,
+  }
 }
 
 async function sleep(ms: number) {
