@@ -2,7 +2,7 @@ import { spawn } from 'node:child_process'
 import { EventEmitter } from 'node:events'
 import { existsSync, mkdtempSync } from 'node:fs'
 import * as fs from 'node:fs/promises'
-import { tmpdir } from 'node:os'
+import { homedir, tmpdir } from 'node:os'
 import { basename, isAbsolute, join } from 'node:path'
 import { performance } from 'node:perf_hooks'
 
@@ -558,6 +558,59 @@ export class PeekabooComputer
     )
   }
 
+  async allowJavaScriptFromAppleEvents(app: 'Google Chrome') {
+    if (app !== 'Google Chrome') {
+      throw new Error(`Only Google Chrome is supported for Apple Events JavaScript. App: ${app}`)
+    }
+
+    if (await this.isJavaScriptFromAppleEventsAllowed(app)) {
+      return
+    }
+
+    const session = await this.captureChromeSession(app)
+    await this.quitApp(app)
+    await this.enableChromeJavaScriptFromAppleEventsPreference()
+    await this.exec({ timeout: 15_000 })`open -a ${app} --args --restore-last-session`
+
+    if (!(await this.waitForChromeWindow(app, 15_000))) {
+      await this.restoreChromeSession(app, session)
+      await this.waitForChromeWindow(app, 15_000)
+    }
+
+    if (await this.isJavaScriptFromAppleEventsAllowed(app)) return
+
+    throw new Error(`Could not enable JavaScript from Apple Events for ${app}`)
+  }
+
+  async isJavaScriptFromAppleEventsAllowed(app: 'Google Chrome') {
+    if (app !== 'Google Chrome') {
+      throw new Error(`Only Google Chrome is supported for Apple Events JavaScript. App: ${app}`)
+    }
+
+    const probeSource = '(() => 1)()'
+    const appleScript = [
+      `tell application ${appleScriptString(app)}`,
+      `set probeResult to execute active tab of front window javascript ${appleScriptString(probeSource)}`,
+      'end tell',
+      'return probeResult',
+    ]
+
+    try {
+      await this.exec`osascript ${raw(appleScript.map((line) => `-e ${shellQuote(line)}`).join(' '))}`
+      return true
+    } catch (error) {
+      if (String(error).includes('Executing JavaScript through AppleScript is turned off')) {
+        return false
+      }
+
+      if (String(error).includes('Invalid index')) {
+        return false
+      }
+
+      throw error
+    }
+  }
+
   menubar(path: string) {
     return new PeekabooMenuBarLocator({
       parent: this,
@@ -659,6 +712,94 @@ export class PeekabooComputer
 
   targetFlags() {
     return ''
+  }
+
+  private async captureChromeSession(app: 'Google Chrome'): Promise<string[][]> {
+    const script = [
+      `const chrome = Application(${JSON.stringify(app)});`,
+      'JSON.stringify(chrome.windows().map((window) => window.tabs().map((tab) => tab.url()).filter(Boolean)).filter((urls) => urls.length > 0));',
+    ].join(' ')
+
+    try {
+      const result = await this.exec`osascript -l JavaScript -e ${script}`
+      return JSON.parse(result.stdout.trim())
+    } catch {
+      return []
+    }
+  }
+
+  private async chromePreferencePaths() {
+    const chromeDirectory = join(homedir(), 'Library/Application Support/Google/Chrome')
+    const entries = await fs.readdir(chromeDirectory, { withFileTypes: true })
+    return entries
+      .filter((entry) => entry.isDirectory())
+      .map((entry) => entry.name)
+      .filter((name) => name === 'Default' || name.startsWith('Profile '))
+      .map((name) => join(chromeDirectory, name, 'Preferences'))
+      .filter((path) => existsSync(path))
+  }
+
+  private async enableChromeJavaScriptFromAppleEventsPreference() {
+    const paths = await this.chromePreferencePaths()
+
+    if (paths.length === 0) {
+      throw new Error('Could not find any Google Chrome profile Preferences files')
+    }
+
+    for (const path of paths) {
+      const backup = `${path}.pre-allow-js-apple-events-bak-ignoreme-${Date.now()}`
+      const prefs = JSON.parse(await fs.readFile(path, 'utf8'))
+      prefs.browser ||= {}
+      prefs.account_values ||= {}
+      prefs.account_values.browser ||= {}
+      prefs.browser.allow_javascript_apple_events = true
+      prefs.account_values.browser.allow_javascript_apple_events = true
+
+      await fs.copyFile(path, backup)
+      await fs.writeFile(path, JSON.stringify(prefs))
+    }
+  }
+
+  private async quitApp(app: 'Google Chrome') {
+    const appleScript = `tell application ${appleScriptString(app)} to quit`
+    await this.exec`osascript -e ${appleScript}`.catch(() => {})
+    await this.exec({ timeout: 30_000 })`i=0; while [ "$i" -lt 150 ]; do if ! pgrep -x ${app} >/dev/null; then exit 0; fi; i=$((i + 1)); sleep 0.2; done; exit 1`
+  }
+
+  private async restoreChromeSession(app: 'Google Chrome', session: string[][]) {
+    const urls = session.flat().filter((url) => url.trim().length > 0)
+
+    if (urls.length === 0) {
+      await this.exec`open -a ${app} about:blank`
+      return
+    }
+
+    for (const url of urls) {
+      await this.exec`open -a ${app} ${url}`
+      await this.sleep(100)
+    }
+  }
+
+  private async waitForChromeWindow(app: 'Google Chrome', timeout: number) {
+    const deadline = Date.now() + timeout
+    const script = [
+      `const chrome = Application(${JSON.stringify(app)});`,
+      'chrome.windows().length;',
+    ].join(' ')
+
+    while (Date.now() < deadline) {
+      try {
+        const result = await this.exec`osascript -l JavaScript -e ${script}`
+
+        if (Number(result.stdout.trim()) > 0) {
+          return true
+        }
+      } catch {}
+
+      await this.sleep(200)
+    }
+
+    return false
   }
 
   private async captureScreenRegionImage(region: ScreenBounds) {
@@ -1060,6 +1201,25 @@ class PeekabooWindow implements AsyncDisposable, PeekabooOcrParent {
   }
 
   async focus() {
+    try {
+      await this.exec`peekaboo window focus ${raw(this.targetFlags())}`
+      return
+    } catch (error) {
+      if (!this.app.toLowerCase().includes('chrome')) {
+        throw error
+      }
+    }
+
+    const peekabooWindow = await waitForExternalPeekabooWindow(
+      this.parent,
+      this.app,
+      {
+        excludeWindowIds: new Set(),
+        windowTitle: undefined,
+      },
+    )
+    this.windowBounds = peekabooWindow.bounds
+    this.windowId = peekabooWindow.window_id
     await this.exec`peekaboo window focus ${raw(this.targetFlags())}`
   }
 
