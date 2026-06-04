@@ -789,15 +789,20 @@ class PeekabooWindow implements AsyncDisposable, PeekabooOcrParent {
     })
   }
 
-  dom<TElement extends HTMLElement = HTMLElement>(selector: string) {
+  dom(): PeekabooDom
+  dom<TElement extends HTMLElement = HTMLElement>(selector: string): PeekabooDomLocator<TElement>
+  dom<TElement extends HTMLElement = HTMLElement>(selector?: string) {
     if (!this.app.toLowerCase().includes('chrome')) {
       throw new Error(`dom() is only supported for Google Chrome windows. Window app: ${this.app}`)
     }
 
-    return new PeekabooDomLocator<TElement>({
-      parent: this,
-      selector,
-    })
+    const dom = new PeekabooDom({ parent: this })
+
+    if (selector) {
+      return dom.locator<TElement>(selector)
+    }
+
+    return dom
   }
 
   async executeChromeJavaScript<Result>(source: string): Promise<Result> {
@@ -1980,6 +1985,49 @@ class PeekabooSeeLocator {
   }
 }
 
+class PeekabooDom {
+  private parent: PeekabooDomParent
+
+  constructor(options: {
+    parent: PeekabooDomParent
+  }) {
+    this.parent = options.parent
+  }
+
+  async evaluate<Result>(
+    fn: (...args: any[]) => Result,
+    ...args: any[]
+  ): Promise<Awaited<Result>> {
+    return await this.parent.guardedAction(
+      'dom.evaluate',
+      { updatesMousePosition: false },
+      async () => {
+        const fnSource = fn.toString()
+        const source = [
+          '(() => {',
+          `const fn = (${fnSource});`,
+          `const args = ${JSON.stringify(args)};`,
+          'return fn(...args);',
+          '})()',
+        ].join(' ')
+
+        return await this.parent.executeChromeJavaScript<Awaited<Result>>(source)
+      },
+    )
+  }
+
+  locator<TElement extends HTMLElement = HTMLElement>(selector: string) {
+    return new PeekabooDomLocator<TElement>({
+      parent: this.parent,
+      selector,
+    })
+  }
+
+  getByTestId<TElement extends HTMLElement = HTMLElement>(testId: string) {
+    return this.locator<TElement>(`[data-testid=${JSON.stringify(testId)}]`)
+  }
+}
+
 class PeekabooDomLocator<TElement extends HTMLElement = HTMLElement> {
   private parent: PeekabooDomParent
   private pendingProxyWrites = new Set<Promise<unknown>>()
@@ -2038,7 +2086,7 @@ class PeekabooDomLocator<TElement extends HTMLElement = HTMLElement> {
       { updatesMousePosition: true },
       async () => {
         await this.parent.focus()
-        const bounds = await this.resolveScreenBounds()
+        const bounds = (await this.waitForInfo({ timeout: 5_000 })).screenBounds
         const coords = centerOfScreenBounds(bounds)
 
         await this.parent.exec`peekaboo click --coords ${coordsString(coords)} --global-coords --no-auto-focus`
@@ -2086,6 +2134,16 @@ class PeekabooDomLocator<TElement extends HTMLElement = HTMLElement> {
           screenBounds: roundScreenBounds(info.screenBounds),
           screenCoordinates: centerOfScreenBounds(info.screenBounds),
         }
+      },
+    )
+  }
+
+  async waitFor(options: { timeout?: number } = {}) {
+    await this.parent.guardedAction(
+      'dom.waitFor',
+      { updatesMousePosition: false },
+      async () => {
+        await this.waitForInfo({ timeout: options.timeout || 5_000 })
       },
     )
   }
@@ -2222,6 +2280,27 @@ class PeekabooDomLocator<TElement extends HTMLElement = HTMLElement> {
 
   private async resolveScreenCoordinates() {
     return centerOfScreenBounds(await this.resolveScreenBounds())
+  }
+
+  private async waitForInfo(options: { timeout: number }) {
+    const deadline = Date.now() + options.timeout
+    let lastError: unknown
+
+    while (Date.now() < deadline) {
+      try {
+        return await this.resolveInfo()
+      } catch (error) {
+        lastError = error
+        await this.parent.sleep(100)
+      }
+    }
+
+    throw new Error(
+      [
+        `Timed out waiting for DOM element: ${this.selector}`,
+        lastError instanceof Error ? lastError.message : String(lastError),
+      ].filter(Boolean).join('\n'),
+    )
   }
 
   private async setProxyProperty(property: string, value: any) {

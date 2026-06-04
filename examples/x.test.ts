@@ -10,10 +10,16 @@ test('draft an X post', async () => {
   await computer.exec`peekaboo open ${fileURLToPath(import.meta.url)} --app Cursor --wait-until-ready`
 
   await using x = await computer.openExternal('https://x.com/mmkalmmkal', {app: 'Google Chrome', closeOnDispose: false, waitUntilReady: true})
+  const dom = x.dom()
 
-  await x.dom('[data-testid="SideNav_NewTweet_Button"]').click()
-  await x.dom('[data-testid="tweetTextarea_0"]').click()
+  await dom.getByTestId('SideNav_NewTweet_Button').click()
+  await dom.getByTestId('tweetTextarea_0').waitFor()
+  await dom.getByTestId('tweetTextarea_0').click()
   await x.type(postDraft)
-  await x.dom('[data-testid="tweetButton"]').hover({ linger: 1000 })
-  await x.dom('[data-testid="tweetButton"]').annotate('😇', { position: 'above' })
+  const draftText: string = await dom.evaluate(() =>
+    Array.from(document.querySelectorAll('[data-testid="tweetTextarea_0"]')).map((el) => (el as HTMLElement).innerText).join('\n')
+  )
+  expect(draftText).toContain(postDraft)
+  await dom.getByTestId('tweetButton').hover({ linger: 1000 })
+  await dom.getByTestId('tweetButton').annotate('😇', { position: 'above' })
 }, 60_000)
