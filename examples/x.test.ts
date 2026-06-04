@@ -15,22 +15,16 @@ test('draft an X post', async () => {
     await computer.exec({ timeout: 30_000 })`ffmpeg -y -hide_banner -loglevel error -f lavfi -i color=c=black:s=1280x720:d=1 -an -c:v libx264 -pix_fmt yuv420p ${postVideoPath}`
   }
 
-  await using x = await computer.openExternal('about:blank', {app: 'Google Chrome', closeOnDispose: false, waitUntilReady: true})
+  await using x = await computer.openExternal('https://x.com/mmkalmmkal', {app: 'Google Chrome', closeOnDispose: false, waitUntilReady: true})
   await computer.allowJavaScriptFromAppleEvents('Google Chrome')
   await x.focus()
 
   await using video = await x.startVideo()
   const dom = x.dom()
 
-  await dom.goto('https://x.com/mmkalmmkal')
-
   await dom.getByTestId('SideNav_NewTweet_Button').click()
-  if (!(await dom.getByTestId('tweetTextarea_0').waitFor({ timeout: 8_000 }).then(() => true).catch(() => false))) {
-    await dom.getByTestId('SideNav_NewTweet_Button').proxy.click()
-    await dom.getByTestId('tweetTextarea_0').waitFor({ timeout: 15_000 })
-  }
-
-  await dom.getByTestId('tweetTextarea_0').type(postDraft)
+  await dom.getByTestId('tweetTextarea_0').type(postDraft, {delay: -1})
+  await dom.getByTestId('tweetButton').annotate('😇', { position: 'above', linger: 1000 })
   await dom.getByLabel('Add photos or video').click()
 
   await x.hotkey('cmd,shift,g', { noAutoFocus: true })
@@ -43,7 +37,7 @@ test('draft an X post', async () => {
   })
 
   await dom.getByTestId('tweetButton').hover({ linger: 1000 })
-  await dom.getByTestId('tweetButton').annotate('😇', { position: 'above' })
+  await dom.getByTestId('tweetButton').annotate('😇', { position: 'above', linger: 1000 })
 
   const videoAssetsPath = await video.save()
   await fs.copyFile(join(videoAssetsPath, 'tight.mp4'), postVideoPath)

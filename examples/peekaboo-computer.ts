@@ -372,6 +372,10 @@ type PeekabooDomParent = PeekabooLocatorParent & {
     options: NormalizedDomAnnotationOptions,
   ): Promise<void>
   executeChromeJavaScript<Result>(source: string): Promise<Result>
+  executeChromeJavaScript<Args, Result>(
+    args: Args,
+    fn: (args: Args) => Result,
+  ): Promise<Awaited<Result>>
   type(text: string, options?: TypeOptions): Promise<void>
 }
 
@@ -1155,18 +1159,36 @@ class PeekabooWindow implements AsyncDisposable, PeekabooOcrParent {
     return dom
   }
 
-  async executeChromeJavaScript<Result>(source: string): Promise<Result> {
+  async executeChromeJavaScript<Result>(source: string): Promise<Result>
+  async executeChromeJavaScript<Args, Result>(
+    args: Args,
+    fn: (args: Args) => Result,
+  ): Promise<Awaited<Result>>
+  async executeChromeJavaScript<Result>(
+    sourceOrArgs: string | unknown,
+    fn?: (args: any) => Result,
+  ): Promise<Awaited<Result>> {
     if (!this.app.toLowerCase().includes('chrome')) {
       throw new Error(`Chrome JavaScript execution requires a Google Chrome window. Window app: ${this.app}`)
     }
 
     await this.focus()
 
-    const encodedSource = Buffer.from(source, 'utf8').toString('base64')
+    const source = typeof sourceOrArgs === 'string' && !fn
+      ? sourceOrArgs
+      : [
+          '(() => {',
+          `const args = ${JSON.stringify(sourceOrArgs)};`,
+          `const fn = (${String(fn)});`,
+          'return fn(args);',
+          '})()',
+        ].join(' ')
+    const encodedSource = encodeURIComponent(source)
     const browserSource = [
       '(() => {',
       'try {',
-      `const value = eval(atob(${JSON.stringify(encodedSource)}));`,
+      `const source = decodeURIComponent(${JSON.stringify(encodedSource)});`,
+      'const value = eval(source);',
       'return JSON.stringify({ ok: true, value });',
       '} catch (error) {',
       'return JSON.stringify({ ok: false, error: String(error), stack: error && error.stack });',
@@ -1192,7 +1214,7 @@ class PeekabooWindow implements AsyncDisposable, PeekabooOcrParent {
       )
     }
 
-    return payload.value as Result
+    return payload.value as Awaited<Result>
   }
 
   async annotateScreenText(
@@ -2455,13 +2477,178 @@ class PeekabooDomLocator<TElement extends HTMLElement = HTMLElement> {
       { updatesMousePosition: false },
       async () => {
         const normalizedOptions = normalizeDomAnnotationOptions(text, options)
-        const bounds = await this.resolveScreenBounds()
-        const coords = screenCoordinatesForAnnotationPosition(
-          bounds,
-          normalizedOptions.position,
+        const annotationId = `peekaboo-dom-annotation-${Date.now()}-${Math.random().toString(16).slice(2)}`
+
+        await this.parent.executeChromeJavaScript(
+          {
+            annotationOptions: normalizedOptions,
+            annotationText: text,
+            id: annotationId,
+            options: domLocatorOptions(this.options),
+            selector: this.selector,
+          },
+          (args: any) => {
+            const { annotationOptions, id, options, selector } = args
+            let annotationText = args.annotationText
+
+            function domElementIsVisible(element: Element) {
+              const rect = element.getBoundingClientRect()
+              const style = getComputedStyle(element)
+
+              return (
+                rect.width > 0 &&
+                rect.height > 0 &&
+                rect.bottom >= 0 &&
+                rect.right >= 0 &&
+                rect.top <= window.innerHeight &&
+                rect.left <= window.innerWidth &&
+                style.display !== 'none' &&
+                style.visibility !== 'hidden' &&
+                style.opacity !== '0'
+              )
+            }
+
+            function domElementMatchesLocatorOptions(element: Element, locatorOptions: any) {
+              if (!locatorOptions.hasText) return true
+
+              const elementText = element.textContent || ''
+
+              if (locatorOptions.hasText.type === 'regex') {
+                return new RegExp(
+                  locatorOptions.hasText.pattern,
+                  locatorOptions.hasText.flags,
+                ).test(elementText)
+              }
+
+              return elementText.includes(locatorOptions.hasText.text)
+            }
+
+            const candidates = Array.from(document.querySelectorAll(selector))
+              .filter((candidate) => domElementMatchesLocatorOptions(candidate, options))
+            const element = candidates.find(domElementIsVisible) || candidates[0]
+
+            if (!element) {
+              throw new Error(`DOM element not found: ${selector}`)
+            }
+
+            document.getElementById(id)?.remove()
+
+            const rect = element.getBoundingClientRect()
+            const offset = 18
+            const parts = annotationOptions.position.split('-')
+            let vertical = 'center'
+            let horizontal = 'center'
+
+            for (const part of parts) {
+              if (part === 'above' || part === 'below') {
+                vertical = part
+              } else if (part === 'left' || part === 'right' || part === 'start' || part === 'end') {
+                horizontal = part
+              } else {
+                vertical = 'center'
+                horizontal = 'center'
+              }
+            }
+
+            let x = rect.left + rect.width / 2
+            let y = rect.top + rect.height / 2
+
+            if (horizontal === 'left' || horizontal === 'start') {
+              x = rect.left - offset
+            } else if (horizontal === 'right' || horizontal === 'end') {
+              x = rect.right + offset
+            }
+
+            if (vertical === 'above') {
+              y = rect.top - offset
+            } else if (vertical === 'below') {
+              y = rect.bottom + offset
+            }
+
+            const overlay = document.createElement('div')
+            const backgroundColor = annotationOptions.backgroundColor.toLowerCase()
+            const hasClearBackground = backgroundColor === 'clear' || backgroundColor === 'transparent'
+            const isEmoji = annotationText.trim().length > 0 && !/[A-Za-z0-9]/.test(annotationText)
+
+            if (isEmoji && !annotationText.includes('\uFE0F')) {
+              annotationText += '\uFE0F'
+            }
+
+            const transformX = horizontal === 'left' || horizontal === 'start'
+              ? '-100%'
+              : horizontal === 'right' || horizontal === 'end'
+                ? '0'
+                : '-50%'
+            const transformY = vertical === 'above'
+              ? '-100%'
+              : vertical === 'below'
+                ? '0'
+                : '-50%'
+            overlay.id = id
+            overlay.textContent = annotationText
+            overlay.setAttribute('data-peekaboo-dom-annotation', 'true')
+
+            if (isEmoji && hasClearBackground) {
+              overlay.style.cssText = [
+                'all: initial !important',
+                'position: fixed !important',
+                'left: ' + Math.round(x) + 'px !important',
+                'top: ' + Math.round(y) + 'px !important',
+                'transform: translate(' + transformX + ', ' + transformY + ') !important',
+                'z-index: 2147483647 !important',
+                'font-family: Apple Color Emoji, Segoe UI Emoji, Noto Color Emoji, sans-serif !important',
+                'font-size: 64px !important',
+                'line-height: 1 !important',
+                'pointer-events: none !important',
+                'color: initial !important',
+                '-webkit-text-fill-color: initial !important',
+                'filter: drop-shadow(0 2px 4px rgba(0,0,0,.6)) !important',
+              ].join('; ')
+            } else {
+              overlay.style.cssText = [
+                'all: initial !important',
+                'align-items: center !important',
+                'background: ' + (hasClearBackground ? 'transparent' : annotationOptions.backgroundColor) + ' !important',
+                'border-radius: 999px !important',
+                'box-shadow: ' + (hasClearBackground ? 'none' : '0 2px 10px rgba(0, 0, 0, 0.25)') + ' !important',
+                'color: ' + (hasClearBackground ? 'initial' : '#fff') + ' !important',
+                'display: inline-flex !important',
+                'filter: drop-shadow(0 2px 4px rgba(0, 0, 0, 0.6)) !important',
+                'font-family: ' + (isEmoji
+                  ? 'Apple Color Emoji, Segoe UI Emoji, Noto Color Emoji, sans-serif'
+                  : 'system-ui, sans-serif') + ' !important',
+                'font-size: ' + (isEmoji ? '64px' : '13px') + ' !important',
+                'font-style: normal !important',
+                'font-weight: ' + (isEmoji ? '400' : '700') + ' !important',
+                'justify-content: center !important',
+                'left: ' + Math.round(x) + 'px !important',
+                'line-height: 1 !important',
+                'min-height: ' + (hasClearBackground ? '0' : '22px') + ' !important',
+                'min-width: ' + (hasClearBackground ? '0' : '22px') + ' !important',
+                'padding: ' + (hasClearBackground ? '0' : '5px 8px') + ' !important',
+                'pointer-events: none !important',
+                'position: fixed !important',
+                'text-shadow: none !important',
+                'top: ' + Math.round(y) + 'px !important',
+                'transform: translate(' + transformX + ', ' + transformY + ') !important',
+                'white-space: nowrap !important',
+                'z-index: 2147483647 !important',
+              ].join('; ')
+
+              overlay.style.setProperty('-webkit-text-fill-color', hasClearBackground ? 'initial' : '#fff', 'important')
+            }
+            ;(document.body || document.documentElement).append(overlay)
+          },
         )
 
-        await this.parent.annotateScreenText(text, coords, normalizedOptions)
+        await this.parent.sleep(normalizedOptions.linger)
+        await this.parent.executeChromeJavaScript<void>(
+          [
+            '(() => {',
+            `document.getElementById(${JSON.stringify(annotationId)})?.remove();`,
+            '})()',
+          ].join(' '),
+        )
       },
     )
   }
@@ -2581,8 +2768,38 @@ class PeekabooDomLocator<TElement extends HTMLElement = HTMLElement> {
       '(() => {',
       `const selector = ${JSON.stringify(this.selector)};`,
       `const options = ${domLocatorOptionsSource(this.options)};`,
-      domElementMatchesLocatorOptionsSource,
-      'const element = Array.from(document.querySelectorAll(selector)).find((candidate) => domElementMatchesLocatorOptions(candidate, options));',
+      `
+function domElementIsVisible(element) {
+  const rect = element.getBoundingClientRect();
+  const style = getComputedStyle(element);
+
+  return (
+    rect.width > 0 &&
+    rect.height > 0 &&
+    rect.bottom >= 0 &&
+    rect.right >= 0 &&
+    rect.top <= window.innerHeight &&
+    rect.left <= window.innerWidth &&
+    style.display !== 'none' &&
+    style.visibility !== 'hidden' &&
+    style.opacity !== '0'
+  );
+}
+
+function domElementMatchesLocatorOptions(element, options) {
+  if (!options.hasText) return true;
+
+  const text = element.textContent || '';
+
+  if (options.hasText.type === 'regex') {
+    return new RegExp(options.hasText.pattern, options.hasText.flags).test(text);
+  }
+
+  return text.includes(options.hasText.text);
+}
+`,
+      'const candidates = Array.from(document.querySelectorAll(selector)).filter((candidate) => domElementMatchesLocatorOptions(candidate, options));',
+      'const element = candidates.find(domElementIsVisible) || candidates[0];',
       "if (!element) throw new Error('DOM element not found: ' + selector);",
       `const fn = (${fnSource});`,
       `const args = ${JSON.stringify(args)};`,
@@ -4226,29 +4443,19 @@ function describeSeeElement(element: PeekabooSeeElement) {
   })}`
 }
 
-function domLocatorOptionsSource(options: DomLocatorOptions) {
+function domLocatorOptions(options: DomLocatorOptions) {
   const hasText = options.hasText instanceof RegExp
     ? { flags: options.hasText.flags, pattern: options.hasText.source, type: 'regex' }
     : options.hasText === undefined
       ? undefined
       : { text: options.hasText, type: 'text' }
 
-  return JSON.stringify({ hasText })
+  return { hasText }
 }
 
-const domElementMatchesLocatorOptionsSource = `
-function domElementMatchesLocatorOptions(element, options) {
-  if (!options.hasText) return true;
-
-  const text = element.textContent || '';
-
-  if (options.hasText.type === 'regex') {
-    return new RegExp(options.hasText.pattern, options.hasText.flags).test(text);
-  }
-
-  return text.includes(options.hasText.text);
+function domLocatorOptionsSource(options: DomLocatorOptions) {
+  return JSON.stringify(domLocatorOptions(options))
 }
-`
 
 function extendOcrMatchesUntil(options: {
   matches: OcrTextOccurrence[]
