@@ -10,6 +10,13 @@ function shellQuote(value: string) {
   return `'${value.replace(/'/g, `'\\''`)}'`
 }
 
+function appleScriptString(value: string) {
+  return `"${value
+    .replace(/\\/g, '\\\\')
+    .replace(/"/g, '\\"')
+    .replace(/\r?\n/g, '\\n')}"`
+}
+
 function slugify(value: string) {
   return value
     .toLowerCase()
@@ -67,6 +74,54 @@ type OcrMatchOptions = OcrOptions & {
 type OcrClickPosition = 'center' | 'end' | 'start'
 
 type ScrollBy = `${'down' | 'up'} ${number}px`
+
+type SeeQuery =
+  | string
+  | {
+      description?: string
+      label?: string
+      role?: string
+      testId?: string
+      text?: string
+      title?: string
+    }
+
+type SeeOptions = {
+  index?: number
+}
+
+type DomAnnotationOptions = {
+  linger?: number
+}
+
+type DomElementInfo = {
+  rect: {
+    height: number
+    left: number
+    top: number
+    width: number
+  }
+  screenBounds: ScreenBounds
+  screenCoordinates: ScreenCoordinates
+  selector: string
+  viewport: {
+    devicePixelRatio: number
+    innerHeight: number
+    innerWidth: number
+    outerHeight: number
+    outerWidth: number
+    screenX: number
+    screenY: number
+  }
+}
+
+type DomProxy<TElement extends HTMLElement> = {
+  -readonly [Key in keyof TElement]: TElement[Key] extends (
+    ...args: infer Args
+  ) => infer Result
+    ? (...args: Args) => Promise<Awaited<Result>>
+    : TElement[Key] | Promise<TElement[Key]>
+}
 
 type ScrollOptions = {
   delay?: number
@@ -213,6 +268,26 @@ type OcrTextOccurrence = {
   text: string
 }
 
+type PeekabooSeeElement = {
+  bounds?: {
+    height: number
+    width: number
+    x: number
+    y: number
+  }
+  description?: string
+  id: string
+  label?: string
+  role?: string
+  role_description?: string
+  title?: string
+}
+
+type PeekabooSeeResult = {
+  element: PeekabooSeeElement
+  screenshotPath: string
+}
+
 type PeekabooCommandParent = {
   exec: ComputerExec
   acceptCurrentMousePosition(): Promise<void>
@@ -242,6 +317,15 @@ type PeekabooOcrParent = PeekabooLocatorParent & {
   findOcrMatch(options: OcrMatchOptions): Promise<OcrMatchResult>
   press(keys: string, options?: PressOptions): Promise<void>
   type(text: string, options?: TypeOptions): Promise<void>
+}
+
+type PeekabooDomParent = PeekabooLocatorParent & {
+  annotateScreenText(
+    text: string,
+    coords: ScreenCoordinates,
+    options: Required<DomAnnotationOptions>,
+  ): Promise<void>
+  executeChromeJavaScript<Result>(source: string): Promise<Result>
 }
 
 export class PeekabooComputer
@@ -390,8 +474,48 @@ export class PeekabooComputer
       )
 
       return new PeekabooWindow({
+        app: options.app,
         assetsDirectory: this.assetsDirectory,
         clipboardSlot: `demo-helper-${basename(this.directory)}`,
+        closeOnDispose: true,
+        directory: this.directory,
+        parent: this,
+        windowBounds: peekabooWindow.bounds,
+        windowId: peekabooWindow.window_id,
+      })
+    })
+  }
+
+  async openExternal(
+    target: string,
+    options: {
+      app: string
+      closeOnDispose: boolean
+      waitUntilReady: boolean
+      windowTitle?: string
+    },
+  ) {
+    return await this.guardedAction('open external', { updatesMousePosition: true }, async () => {
+      const previousWindowIds = new Set(
+        (await listPeekabooWindows(this, options.app)).map((window) => window.window_id),
+      )
+      const waitFlag = options.waitUntilReady ? '--wait-until-ready' : ''
+
+      await this.exec({ timeout: 60_000 })`peekaboo open ${target} --app ${options.app} ${raw(waitFlag)}`
+      const peekabooWindow = await waitForExternalPeekabooWindow(
+        this,
+        options.app,
+        {
+          excludeWindowIds: previousWindowIds,
+          windowTitle: options.windowTitle,
+        },
+      )
+
+      return new PeekabooWindow({
+        app: options.app,
+        assetsDirectory: this.assetsDirectory,
+        clipboardSlot: `demo-helper-${basename(this.directory)}`,
+        closeOnDispose: options.closeOnDispose,
         directory: this.directory,
         parent: this,
         windowBounds: peekabooWindow.bounds,
@@ -470,26 +594,33 @@ export class PeekabooComputer
 }
 
 class PeekabooWindow implements AsyncDisposable, PeekabooOcrParent {
+  private app: string
   private assetsDirectory: string
   private clipboardSlot: string
+  private closeOnDispose: boolean
   private directory: string
   private mouseGuard: PeekabooMouseGuard
   private ocrCaptureIndex = 0
   private parent: PeekabooCommandParent
+  private seeCaptureIndex = 0
   private video?: PeekabooVideo
   private windowBounds: PeekabooBounds
   private windowId: number
 
   constructor(options: {
+    app: string
     assetsDirectory: string
     clipboardSlot: string
+    closeOnDispose: boolean
     directory: string
     parent: PeekabooCommandParent
     windowBounds: PeekabooBounds
     windowId: number
   }) {
+    this.app = options.app
     this.assetsDirectory = options.assetsDirectory
     this.clipboardSlot = options.clipboardSlot
+    this.closeOnDispose = options.closeOnDispose
     this.directory = options.directory
     this.parent = options.parent
     this.windowBounds = options.windowBounds
@@ -505,6 +636,10 @@ class PeekabooWindow implements AsyncDisposable, PeekabooOcrParent {
   }
 
   async [Symbol.asyncDispose]() {
+    if (!this.closeOnDispose) {
+      return
+    }
+
     // Never fall back to title matching here; cleanup must not close a user's real Cursor window.
     await this.exec({ timeout: 15_000 })`peekaboo window close --window-id ${this.windowId}`.catch(
       () => {},
@@ -632,6 +767,115 @@ class PeekabooWindow implements AsyncDisposable, PeekabooOcrParent {
       parent: this,
       text,
     })
+  }
+
+  see(query: SeeQuery, options: SeeOptions = {}) {
+    return new PeekabooSeeLocator({
+      options,
+      parent: this,
+      query,
+    })
+  }
+
+  dom<TElement extends HTMLElement = HTMLElement>(selector: string) {
+    if (!this.app.toLowerCase().includes('chrome')) {
+      throw new Error(`dom() is only supported for Google Chrome windows. Window app: ${this.app}`)
+    }
+
+    return new PeekabooDomLocator<TElement>({
+      parent: this,
+      selector,
+    })
+  }
+
+  async executeChromeJavaScript<Result>(source: string): Promise<Result> {
+    if (!this.app.toLowerCase().includes('chrome')) {
+      throw new Error(`Chrome JavaScript execution requires a Google Chrome window. Window app: ${this.app}`)
+    }
+
+    await this.focus()
+
+    const encodedSource = Buffer.from(source, 'utf8').toString('base64')
+    const browserSource = [
+      '(() => {',
+      'try {',
+      `const value = eval(atob(${JSON.stringify(encodedSource)}));`,
+      'return JSON.stringify({ ok: true, value });',
+      '} catch (error) {',
+      'return JSON.stringify({ ok: false, error: String(error), stack: error && error.stack });',
+      '}',
+      '})()',
+    ].join(' ')
+    const appleScript = [
+      'tell application "Google Chrome"',
+      `set resultJson to execute active tab of front window javascript ${appleScriptString(browserSource)}`,
+      'end tell',
+      'return resultJson',
+    ]
+    const result = await this.exec`osascript ${raw(appleScript.map((line) => `-e ${shellQuote(line)}`).join(' '))}`
+    const payload = JSON.parse(result.stdout.trim())
+
+    if (!payload.ok) {
+      throw new Error(
+        [
+          'Chrome JavaScript execution failed.',
+          payload.error,
+          payload.stack,
+        ].filter(Boolean).join('\n'),
+      )
+    }
+
+    return payload.value as Result
+  }
+
+  async annotateScreenText(
+    text: string,
+    coords: ScreenCoordinates,
+    options: Required<DomAnnotationOptions>,
+  ) {
+    const scriptPath = await this.screenAnnotationScriptPath()
+
+    await this.exec({ timeout: options.linger + 5_000 })`swift ${scriptPath} ${text} ${Math.round(coords.x)} ${Math.round(coords.y)} ${options.linger}`
+  }
+
+  async findSeeElement(
+    query: SeeQuery,
+    options: SeeOptions,
+  ): Promise<PeekabooSeeResult> {
+    this.seeCaptureIndex += 1
+    const screenshotPath = join(
+      this.assetsDirectory,
+      `see-${this.seeCaptureIndex}-${Date.now()}.png`,
+    )
+    await fs.mkdir(this.assetsDirectory, { recursive: true })
+    const result = await this.exec({ timeout: 15_000 })`peekaboo see ${raw(this.targetFlags())} --json --path ${screenshotPath}`
+    const payload = JSON.parse(result.stdout)
+    const elements = Array.isArray(payload.data && payload.data.ui_elements)
+      ? payload.data.ui_elements
+      : []
+    const matches = elements.filter((element: PeekabooSeeElement) =>
+      seeElementMatches(element, query),
+    )
+    const index = options.index === undefined
+      ? 0
+      : options.index < 0
+        ? matches.length + options.index
+        : options.index
+    const element = matches[index]
+
+    if (!element) {
+      throw new Error(
+        [
+          `Peekaboo see element not found: ${formatSeeQuery(query)}`,
+          `See screenshot: ${screenshotPath}`,
+          `Matched elements: ${matches.length}`,
+          `Visible elements:`,
+          ...elements.slice(0, 80).map(describeSeeElement),
+        ].join('\n'),
+      )
+    }
+
+    return { element, screenshotPath }
   }
 
   async findOcrMatch(options: OcrMatchOptions): Promise<OcrMatchResult> {
@@ -969,6 +1213,13 @@ class PeekabooWindow implements AsyncDisposable, PeekabooOcrParent {
     const scriptPath = join(this.assetsDirectory, 'focused-scroll.swift')
     await fs.mkdir(this.assetsDirectory, { recursive: true })
     await fs.writeFile(scriptPath, focusedScrollSwiftSource)
+    return scriptPath
+  }
+
+  private async screenAnnotationScriptPath() {
+    const scriptPath = join(this.assetsDirectory, 'screen-annotation.swift')
+    await fs.mkdir(this.assetsDirectory, { recursive: true })
+    await fs.writeFile(scriptPath, screenAnnotationSwiftSource)
     return scriptPath
   }
 }
@@ -1647,6 +1898,341 @@ class PeekabooLocator {
   }
 }
 
+class PeekabooSeeLocator {
+  private match?: Promise<PeekabooSeeResult>
+  private options: SeeOptions
+  private parent: PeekabooLocatorParent & {
+    findSeeElement(query: SeeQuery, options: SeeOptions): Promise<PeekabooSeeResult>
+  }
+  private query: SeeQuery
+
+  constructor(options: {
+    options: SeeOptions
+    parent: PeekabooLocatorParent & {
+      findSeeElement(query: SeeQuery, options: SeeOptions): Promise<PeekabooSeeResult>
+    }
+    query: SeeQuery
+  }) {
+    this.options = options.options
+    this.parent = options.parent
+    this.query = options.query
+  }
+
+  async click() {
+    await this.parent.guardedAction(
+      'see.click',
+      { updatesMousePosition: true },
+      async () => {
+        const { element } = await this.resolve()
+
+        await this.parent.focus()
+        await this.parent.exec`peekaboo click --on ${element.id} --snapshot latest ${raw(this.parent.targetFlags())} --no-auto-focus`
+        this.recordAutozoom('click', element)
+        await this.parent.sleep(100)
+      },
+    )
+  }
+
+  async hover({ linger = 100 } = {}) {
+    await this.parent.guardedAction(
+      'see.hover',
+      { updatesMousePosition: true },
+      async () => {
+        const { element } = await this.resolve()
+
+        await this.parent.focus()
+        await this.parent.exec`peekaboo move --on ${element.id} --snapshot latest ${raw(this.parent.targetFlags())} --duration 150 --steps 5 --profile linear --no-auto-focus`
+        this.recordAutozoom('hover', element)
+        await this.parent.sleep(linger)
+      },
+    )
+  }
+
+  private recordAutozoom(
+    trigger: Extract<AutozoomTrigger, 'click' | 'hover'>,
+    element: PeekabooSeeElement,
+  ) {
+    if (!element.bounds) {
+      return
+    }
+
+    this.parent.recordAutozoomBounds(trigger, {
+      ...element.bounds,
+      relativeTo: 'screen',
+    })
+  }
+
+  private async resolve() {
+    this.match = this.match || this.parent.findSeeElement(this.query, this.options)
+    return await this.match
+  }
+}
+
+class PeekabooDomLocator<TElement extends HTMLElement = HTMLElement> {
+  private parent: PeekabooDomParent
+  private pendingProxyWrites = new Set<Promise<unknown>>()
+  private selector: string
+
+  constructor(options: {
+    parent: PeekabooDomParent
+    selector: string
+  }) {
+    this.parent = options.parent
+    this.selector = options.selector
+  }
+
+  get proxy(): DomProxy<TElement> {
+    const locator = this
+
+    return new Proxy({}, {
+      get(_target, property) {
+        if (typeof property === 'symbol') {
+          return undefined
+        }
+
+        return locator.proxyMember(property)
+      },
+      set(_target, property, value) {
+        if (typeof property === 'symbol') {
+          return false
+        }
+
+        locator.trackProxyWrite(locator.setProxyProperty(property, value))
+        return true
+      },
+    }) as DomProxy<TElement>
+  }
+
+  async annotate(text: string, options: DomAnnotationOptions = {}) {
+    await this.parent.guardedAction(
+      'dom.annotate',
+      { updatesMousePosition: false },
+      async () => {
+        const coords = await this.resolveScreenCoordinates()
+
+        await this.parent.annotateScreenText(text, coords, {
+          linger: options.linger || 1_000,
+        })
+      },
+    )
+  }
+
+  async click() {
+    await this.parent.guardedAction(
+      'dom.click',
+      { updatesMousePosition: true },
+      async () => {
+        await this.parent.focus()
+        const bounds = await this.resolveScreenBounds()
+        const coords = centerOfScreenBounds(bounds)
+
+        await this.parent.exec`peekaboo click --coords ${coordsString(coords)} --global-coords --no-auto-focus`
+        this.parent.recordAutozoomBounds('click', bounds)
+        await this.parent.sleep(100)
+      },
+    )
+  }
+
+  async evaluate<Result>(
+    fn: (element: TElement, ...args: any[]) => Result,
+    ...args: any[]
+  ): Promise<Awaited<Result>> {
+    return await this.parent.guardedAction(
+      'dom.evaluate',
+      { updatesMousePosition: false },
+      async () => await this.evaluateNow(fn, args),
+    )
+  }
+
+  async hover({ linger = 100 } = {}) {
+    await this.parent.guardedAction(
+      'dom.hover',
+      { updatesMousePosition: true },
+      async () => {
+        await this.parent.focus()
+        const bounds = await this.resolveScreenBounds()
+        const coords = centerOfScreenBounds(bounds)
+
+        await this.parent.exec`peekaboo move --coords ${coordsString(coords)} --duration 150 --steps 5 --profile linear --no-auto-focus`
+        this.parent.recordAutozoomBounds('hover', bounds)
+        await this.parent.sleep(linger)
+      },
+    )
+  }
+
+  async info(): Promise<DomElementInfo> {
+    return await this.parent.guardedAction(
+      'dom.info',
+      { updatesMousePosition: false },
+      async () => {
+        const info = await this.resolveInfo()
+        return {
+          ...info,
+          screenBounds: roundScreenBounds(info.screenBounds),
+          screenCoordinates: centerOfScreenBounds(info.screenBounds),
+        }
+      },
+    )
+  }
+
+  async screenBounds(): Promise<ScreenBounds> {
+    return await this.parent.guardedAction(
+      'dom.screenBounds',
+      { updatesMousePosition: false },
+      async () => roundScreenBounds(await this.resolveScreenBounds()),
+    )
+  }
+
+  async screenCoordinates(): Promise<ScreenCoordinates> {
+    return await this.parent.guardedAction(
+      'dom.screenCoordinates',
+      { updatesMousePosition: false },
+      async () => centerOfScreenBounds(await this.resolveScreenBounds()),
+    )
+  }
+
+  async waitForProxyWrites() {
+    await Promise.all([...this.pendingProxyWrites])
+  }
+
+  private async callProxyMethod(property: string, args: any[]) {
+    return await this.parent.guardedAction(
+      `dom.proxy.${property}`,
+      { updatesMousePosition: false },
+      async () =>
+        await this.evaluateNow(
+          (element: any, method: string, methodArgs: any[]) =>
+            element[method](...methodArgs),
+          [property, args],
+        ),
+    )
+  }
+
+  private async evaluateNow<Result>(
+    fn: (element: TElement, ...args: any[]) => Result,
+    args: any[],
+  ): Promise<Awaited<Result>> {
+    const fnSource = fn.toString()
+    const source = [
+      '(() => {',
+      `const selector = ${JSON.stringify(this.selector)};`,
+      'const element = document.querySelector(selector);',
+      "if (!element) throw new Error('DOM element not found: ' + selector);",
+      `const fn = (${fnSource});`,
+      `const args = ${JSON.stringify(args)};`,
+      'return fn(element, ...args);',
+      '})()',
+    ].join(' ')
+
+    return await this.parent.executeChromeJavaScript<Awaited<Result>>(source)
+  }
+
+  private async getProxyProperty(property: string) {
+    return await this.parent.guardedAction(
+      `dom.proxy.${property}`,
+      { updatesMousePosition: false },
+      async () =>
+        await this.evaluateNow(
+          (element: any, key: string) => element[key],
+          [property],
+        ),
+    )
+  }
+
+  private proxyMember(property: string) {
+    const locator = this
+    const getter = () => locator.getProxyProperty(property)
+    const member = (...args: any[]) => locator.callProxyMethod(property, args)
+
+    member.then = (...args: Parameters<Promise<unknown>['then']>) =>
+      getter().then(...args)
+    member.catch = (...args: Parameters<Promise<unknown>['catch']>) =>
+      getter().catch(...args)
+    member.finally = (...args: Parameters<Promise<unknown>['finally']>) =>
+      getter().finally(...args)
+
+    return member
+  }
+
+  private async resolveInfo(): Promise<DomElementInfo> {
+    return await this.evaluateNow(
+      (element: TElement, selector: string) => {
+        const rect = element.getBoundingClientRect()
+        const screenBounds = {
+          height: rect.height,
+          relativeTo: 'screen' as const,
+          width: rect.width,
+          x:
+            window.screenX +
+            (window.outerWidth - window.innerWidth) / 2 +
+            rect.left,
+          y:
+            window.screenY +
+            (window.outerHeight - window.innerHeight) +
+            rect.top,
+        }
+
+        return {
+          rect: {
+            height: rect.height,
+            left: rect.left,
+            top: rect.top,
+            width: rect.width,
+          },
+          screenBounds,
+          screenCoordinates: {
+            relativeTo: 'screen' as const,
+            x: screenBounds.x + screenBounds.width / 2,
+            y: screenBounds.y + screenBounds.height / 2,
+          },
+          selector,
+          viewport: {
+            devicePixelRatio: window.devicePixelRatio,
+            innerHeight: window.innerHeight,
+            innerWidth: window.innerWidth,
+            outerHeight: window.outerHeight,
+            outerWidth: window.outerWidth,
+            screenX: window.screenX,
+            screenY: window.screenY,
+          },
+        }
+      },
+      [this.selector],
+    )
+  }
+
+  private async resolveScreenBounds() {
+    return (await this.resolveInfo()).screenBounds
+  }
+
+  private async resolveScreenCoordinates() {
+    return centerOfScreenBounds(await this.resolveScreenBounds())
+  }
+
+  private async setProxyProperty(property: string, value: any) {
+    await this.parent.guardedAction(
+      `dom.proxy.${property}`,
+      { updatesMousePosition: false },
+      async () => {
+        await this.evaluateNow(
+          (element: any, key: string, nextValue: any) => {
+            element[key] = nextValue
+            return element[key]
+          },
+          [property, value],
+        )
+      },
+    )
+  }
+
+  private trackProxyWrite(promise: Promise<unknown>) {
+    this.pendingProxyWrites.add(promise)
+    void promise.finally(() => {
+      this.pendingProxyWrites.delete(promise)
+    })
+  }
+}
+
 class PeekabooOcrLocator {
   private match?: Promise<OcrMatchResult>
   private options: OcrOptions
@@ -2074,6 +2660,45 @@ async function waitForPeekabooWindow(
   }
 
   throw new Error(`Cursor window not found for ${windowTitle}`)
+}
+
+async function waitForExternalPeekabooWindow(
+  parent: PeekabooCommandParent,
+  app: string,
+  options: {
+    excludeWindowIds: Set<number>
+    windowTitle?: string
+  },
+): Promise<PeekabooWindowInfo> {
+  let latestWindow: PeekabooWindowInfo | undefined
+
+  for (let attempt = 0; attempt < 50; attempt += 1) {
+    const windows = (await listPeekabooWindows(parent, app))
+      .filter((window) =>
+        options.windowTitle
+          ? window.window_title.includes(options.windowTitle)
+          : window.window_title.trim().length > 0,
+      )
+      .sort((left, right) => right.window_id - left.window_id)
+
+    latestWindow = windows[0] || latestWindow
+
+    const newWindow = windows.find(
+      (window) => !options.excludeWindowIds.has(window.window_id),
+    )
+
+    if (newWindow) {
+      return newWindow
+    }
+
+    if (attempt >= 5 && latestWindow) {
+      return latestWindow
+    }
+
+    await sleep(200)
+  }
+
+  throw new Error(`Window not found for ${app}`)
 }
 
 async function findPeekabooWindow(
@@ -2586,6 +3211,75 @@ function filterOcrMatches(options: {
   return matches
 }
 
+function seeElementMatches(element: PeekabooSeeElement, query: SeeQuery) {
+  if (typeof query === 'string') {
+    return seeElementTextValues(element).some((value) =>
+      normalizedText(value).includes(normalizedText(query)),
+    )
+  }
+
+  if (query.text && !seeElementTextValues(element).some((value) =>
+    normalizedText(value).includes(normalizedText(query.text || '')),
+  )) {
+    return false
+  }
+
+  if (query.label && normalizedText(element.label || '') !== normalizedText(query.label)) {
+    return false
+  }
+
+  if (query.title && normalizedText(element.title || '') !== normalizedText(query.title)) {
+    return false
+  }
+
+  if (query.description && !normalizedText(element.description || '').includes(normalizedText(query.description))) {
+    return false
+  }
+
+  if (query.role) {
+    const roleValues = [element.role, element.role_description].map((value) =>
+      normalizedText(value || ''),
+    )
+
+    if (!roleValues.some((value) => value.includes(normalizedText(query.role || '')))) {
+      return false
+    }
+  }
+
+  if (query.testId && !JSON.stringify(element).includes(query.testId)) {
+    return false
+  }
+
+  return true
+}
+
+function seeElementTextValues(element: PeekabooSeeElement) {
+  return [
+    element.label,
+    element.title,
+    element.description,
+    element.role_description,
+  ].filter((value): value is string => typeof value === 'string' && value.length > 0)
+}
+
+function normalizedText(value: string) {
+  return value.trim().toLowerCase().replace(/\s+/g, ' ')
+}
+
+function formatSeeQuery(query: SeeQuery) {
+  return typeof query === 'string' ? JSON.stringify(query) : JSON.stringify(query)
+}
+
+function describeSeeElement(element: PeekabooSeeElement) {
+  return `- ${element.id} ${JSON.stringify({
+    description: element.description,
+    label: element.label,
+    role: element.role,
+    role_description: element.role_description,
+    title: element.title,
+  })}`
+}
+
 function extendOcrMatchesUntil(options: {
   matches: OcrTextOccurrence[]
   textPositions: OcrTextOccurrence[]
@@ -2930,9 +3624,74 @@ for _ in 0..<steps {
     exit(1)
   }
 
-  event.post(tap: .cghidEventTap)
+event.post(tap: .cghidEventTap)
   usleep(delayMicroseconds)
 }
+`
+
+const screenAnnotationSwiftSource = `
+import AppKit
+import Foundation
+
+let text = CommandLine.arguments.count > 1 ? CommandLine.arguments[1] : ""
+let screenX = CommandLine.arguments.count > 2 ? Double(CommandLine.arguments[2]) ?? 0 : 0
+let screenY = CommandLine.arguments.count > 3 ? Double(CommandLine.arguments[3]) ?? 0 : 0
+let durationMs = CommandLine.arguments.count > 4 ? Double(CommandLine.arguments[4]) ?? 1000 : 1000
+
+let app = NSApplication.shared
+app.setActivationPolicy(.accessory)
+
+let label = NSTextField(labelWithString: text)
+label.font = NSFont.systemFont(ofSize: 56, weight: .bold)
+label.alignment = .center
+label.textColor = .white
+label.backgroundColor = .clear
+label.isBordered = false
+label.isBezeled = false
+label.drawsBackground = false
+label.sizeToFit()
+
+let paddingX: CGFloat = 32
+let paddingY: CGFloat = 20
+let width = max(label.frame.width + paddingX, 96)
+let height = max(label.frame.height + paddingY, 80)
+let maxScreenY = NSScreen.screens.map { $0.frame.maxY }.max() ?? NSScreen.main?.frame.maxY ?? height
+let originX = CGFloat(screenX) - width / 2
+let originY = CGFloat(maxScreenY - screenY) - height / 2
+
+let contentView = NSView(frame: NSRect(x: 0, y: 0, width: width, height: height))
+contentView.wantsLayer = true
+contentView.layer?.backgroundColor = NSColor.black.withAlphaComponent(0.52).cgColor
+contentView.layer?.cornerRadius = min(width, height) / 2
+
+label.frame = NSRect(
+  x: paddingX / 2,
+  y: paddingY / 2,
+  width: width - paddingX,
+  height: height - paddingY
+)
+contentView.addSubview(label)
+
+let window = NSPanel(
+  contentRect: NSRect(x: originX, y: originY, width: width, height: height),
+  styleMask: [.borderless, .nonactivatingPanel],
+  backing: .buffered,
+  defer: false
+)
+window.contentView = contentView
+window.backgroundColor = .clear
+window.hasShadow = true
+window.ignoresMouseEvents = true
+window.isOpaque = false
+window.level = .screenSaver
+window.collectionBehavior = [.canJoinAllSpaces, .transient, .ignoresCycle]
+window.orderFrontRegardless()
+
+DispatchQueue.main.asyncAfter(deadline: .now() + durationMs / 1000) {
+  app.terminate(nil)
+}
+
+app.run()
 `
 
 const visionOcrSwiftSource = `
