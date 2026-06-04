@@ -9,11 +9,7 @@ test('draft an X post', async () => {
 
   await computer.exec`peekaboo open ${fileURLToPath(import.meta.url)} --app Cursor --wait-until-ready`
 
-  await using x = await computer.openExternal('https://x.com/mmkalmmkal', {
-    app: 'Google Chrome',
-    closeOnDispose: false,
-    waitUntilReady: true,
-  })
+  await using x = await computer.openExternal('https://x.com/mmkalmmkal', {app: 'Google Chrome', closeOnDispose: false, waitUntilReady: true})
 
   await x.dom('[data-testid="SideNav_NewTweet_Button"]').click()
   await x.dom('[data-testid="tweetTextarea_0"]').click()
