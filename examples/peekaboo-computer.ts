@@ -327,6 +327,7 @@ type PeekabooSeeResult = {
 type PeekabooCommandParent = {
   exec: ComputerExec
   acceptCurrentMousePosition(): Promise<void>
+  expectedMousePosition(): MousePosition | undefined
   guardedAction<T>(
     name: string,
     options: GuardedActionOptions,
@@ -487,6 +488,10 @@ export class PeekabooComputer
 
   async acceptCurrentMousePosition() {
     await this.mouseGuard.acceptCurrentPosition()
+  }
+
+  expectedMousePosition() {
+    return this.mouseGuard.expectedMousePosition()
   }
 
   async open(
@@ -1397,6 +1402,12 @@ class PeekabooWindow implements AsyncDisposable, PeekabooOcrParent {
     options: GuardedActionOptions,
     action: () => Promise<T>,
   ) {
+    const parentExpectedPosition = this.parent.expectedMousePosition()
+
+    if (parentExpectedPosition) {
+      this.mouseGuard.acceptPosition(parentExpectedPosition)
+    }
+
     await this.mouseGuard.assertStill(`before ${name}`)
     const result = await action()
 
@@ -1412,6 +1423,10 @@ class PeekabooWindow implements AsyncDisposable, PeekabooOcrParent {
 
   async acceptCurrentMousePosition() {
     await this.mouseGuard.acceptCurrentPosition()
+  }
+
+  expectedMousePosition() {
+    return this.mouseGuard.expectedMousePosition()
   }
 
   recordAutozoomPoint(
@@ -2360,6 +2375,22 @@ class PeekabooDom {
     )
   }
 
+  async goto(url: string) {
+    await this.parent.guardedAction(
+      'dom.goto',
+      { updatesMousePosition: false },
+      async () => {
+        const source = [
+          '(() => {',
+          `location.href = ${JSON.stringify(url)};`,
+          '})()',
+        ].join(' ')
+
+        await this.parent.executeChromeJavaScript<void>(source)
+      },
+    )
+  }
+
   locator<TElement extends HTMLElement = HTMLElement>(
     selector: string,
     options: DomLocatorOptions = {},
@@ -2729,7 +2760,7 @@ class PeekabooDomLocator<TElement extends HTMLElement = HTMLElement> {
 }
 
 class PeekabooOcrLocator {
-  private match?: Promise<OcrMatchResult>
+  private match?: OcrMatchResult
   private options: OcrOptions
   private parent: PeekabooOcrParent
   private text: string
@@ -2914,47 +2945,58 @@ class PeekabooOcrLocator {
     )
   }
 
-  async waitFor() {
+  async waitFor(options: { timeout?: number } = {}) {
     return await this.parent.guardedAction(
       'ocr.waitFor',
       { updatesMousePosition: false },
       async () => {
-        return await this.parent.deadAir(async () => {
-          const deadline = Date.now() + 5_000
-          let lastError: unknown
-
-          while (Date.now() < deadline) {
-            try {
-              this.match = undefined
-              await this.resolve()
-              return this
-            } catch (error) {
-              lastError = error
-            }
-
-            await this.parent.sleep(100)
-          }
-
-          throw new Error(
-            `Timed out waiting for OCR text ${JSON.stringify(this.text)}. ${String(lastError)}`,
-          )
-        })
+        this.match = undefined
+        await this.waitForMatch({ timeout: options.timeout || 5_000 })
+        return this
       },
     )
   }
 
-  private resolve() {
-    this.match =
-      this.match ||
-      this.parent.deadAir(() =>
-        this.parent.findOcrMatch({ ...this.options, text: this.text }).catch(e => {
-          if (String(e).includes('OCR text not found')) {
-            return this.parent.findOcrMatch({ ...this.options, text: this.text }) // try one more time
-          }
-          throw e;
-        }),
-      )
+  private async resolve() {
+    if (!this.match) {
+      this.match = await this.waitForMatch({ timeout: 5_000 })
+    }
+
     return this.match
+  }
+
+  private async waitForMatch(options: { timeout: number }) {
+    return await this.parent.deadAir(async () => {
+      const deadline = Date.now() + options.timeout
+      let lastError: unknown
+
+      while (Date.now() < deadline) {
+        try {
+          this.match = await this.findMatchOnce()
+          return this.match
+        } catch (error) {
+          lastError = error
+        }
+
+        await this.parent.sleep(100)
+      }
+
+      throw new Error(
+        `Timed out waiting for OCR text ${JSON.stringify(this.text)}. ${String(lastError)}`,
+      )
+    })
+  }
+
+  private async findMatchOnce() {
+    try {
+      return await this.parent.findOcrMatch({ ...this.options, text: this.text })
+    } catch (error) {
+      if (String(error).includes('OCR text not found')) {
+        return await this.parent.findOcrMatch({ ...this.options, text: this.text })
+      }
+
+      throw error
+    }
   }
 }
 
@@ -2981,6 +3023,14 @@ class PeekabooThrowingMouseGuard {
 
   async acceptCurrentPosition() {
     this.expectedPosition = await readSystemMousePosition(this.exec)
+  }
+
+  acceptPosition(position: MousePosition) {
+    this.expectedPosition = { ...position }
+  }
+
+  expectedMousePosition() {
+    return this.expectedPosition ? { ...this.expectedPosition } : undefined
   }
 
   async assertStill(location: string) {
@@ -3019,6 +3069,14 @@ class PeekabooMouseGuard {
 
   async acceptCurrentPosition() {
     this.expectedPosition = await readSystemMousePosition(this.exec)
+  }
+
+  acceptPosition(position: MousePosition) {
+    this.expectedPosition = { ...position }
+  }
+
+  expectedMousePosition() {
+    return this.expectedPosition ? { ...this.expectedPosition } : undefined
   }
 
   async assertStill(location: string) {

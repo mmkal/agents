@@ -22,9 +22,7 @@ test('draft an X post', async () => {
   await using video = await x.startVideo()
   const dom = x.dom()
 
-  await dom.evaluate((url) => {
-    location.href = url
-  }, 'https://x.com/mmkalmmkal')
+  await dom.goto('https://x.com/mmkalmmkal')
 
   await dom.getByTestId('SideNav_NewTweet_Button').click()
   if (!(await dom.getByTestId('tweetTextarea_0').waitFor({ timeout: 8_000 }).then(() => true).catch(() => false))) {
@@ -39,9 +37,7 @@ test('draft an X post', async () => {
   await x.hotkey('cmd,a', { noAutoFocus: true })
   await x.type(uploadDirectory, { delay: -1, noAutoFocus: true })
   await x.press('return', { noAutoFocus: true })
-  await x.sleep(500)
   await computer.ocr('post.mp4').dblclick()
-  await x.acceptCurrentMousePosition()
   await video.fastForward({ maxDuration: '2s' }, async () => {
     await dom.locator('[role="status"]', { hasText: 'Uploaded (100%)' }).waitFor({timeout: 10_000})
   })
@@ -59,9 +55,7 @@ test('draft an X post', async () => {
   await x.hotkey('cmd,a', { noAutoFocus: true })
   await x.type(uploadDirectory, { delay: -1, noAutoFocus: true })
   await x.press('return', { noAutoFocus: true })
-  await x.sleep(500)
   await computer.ocr('post.mp4').dblclick()
-  await x.acceptCurrentMousePosition()
   await video.fastForward({ maxDuration: '2s' }, async () => {
     await dom.locator('[role="status"]', { hasText: 'Uploaded (100%)' }).waitFor({timeout: 10_000})
   })
