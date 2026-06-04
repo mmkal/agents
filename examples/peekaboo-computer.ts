@@ -2637,7 +2637,7 @@ class PeekabooDomLocator<TElement extends HTMLElement = HTMLElement> {
       `const selector = ${JSON.stringify(this.selector)};`,
       'const candidates = Array.from(document.querySelectorAll(selector));',
       'return candidates.slice(0, 10).map((candidate, index) => {',
-      'const text = [candidate.innerText, candidate.textContent, candidate.getAttribute("aria-label"), candidate.getAttribute("aria-valuetext")].filter(Boolean).join(" ").replace(/\\s+/g, " ").trim();',
+      'const text = (candidate.textContent || "").replace(/\\s+/g, " ").trim();',
       'return `${index}: ${text}`;',
       '}).filter((text) => text.trim()).join("\\n");',
       '})()',
@@ -3918,7 +3918,7 @@ const domElementMatchesLocatorOptionsSource = `
 function domElementMatchesLocatorOptions(element, options) {
   if (!options.hasText) return true;
 
-  const text = element.innerText || element.textContent || '';
+  const text = element.textContent || '';
 
   if (options.hasText.type === 'regex') {
     return new RegExp(options.hasText.pattern, options.hasText.flags).test(text);
