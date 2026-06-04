@@ -90,9 +90,21 @@ type SeeOptions = {
   index?: number
 }
 
+type AnnotationBasePosition = 'above' | 'below' | 'center' | 'end' | 'left' | 'right' | 'start'
+type AnnotationHorizontalPosition = 'center' | 'end' | 'left' | 'right' | 'start'
+type AnnotationVerticalPosition = 'above' | 'below' | 'center'
+type AnnotationPosition =
+  | AnnotationBasePosition
+  | `${Exclude<AnnotationVerticalPosition, 'center'>}-${Exclude<AnnotationHorizontalPosition, 'center'>}`
+  | `${Exclude<AnnotationHorizontalPosition, 'center'>}-${Exclude<AnnotationVerticalPosition, 'center'>}`
+
 type DomAnnotationOptions = {
+  backgroundColor?: string
   linger?: number
+  position?: AnnotationPosition
 }
+
+type NormalizedDomAnnotationOptions = Required<DomAnnotationOptions>
 
 type DomElementInfo = {
   rect: {
@@ -323,7 +335,7 @@ type PeekabooDomParent = PeekabooLocatorParent & {
   annotateScreenText(
     text: string,
     coords: ScreenCoordinates,
-    options: Required<DomAnnotationOptions>,
+    options: NormalizedDomAnnotationOptions,
   ): Promise<void>
   executeChromeJavaScript<Result>(source: string): Promise<Result>
 }
@@ -831,11 +843,11 @@ class PeekabooWindow implements AsyncDisposable, PeekabooOcrParent {
   async annotateScreenText(
     text: string,
     coords: ScreenCoordinates,
-    options: Required<DomAnnotationOptions>,
+    options: NormalizedDomAnnotationOptions,
   ) {
     const scriptPath = await this.screenAnnotationScriptPath()
 
-    await this.exec({ timeout: options.linger + 5_000 })`swift ${scriptPath} ${text} ${Math.round(coords.x)} ${Math.round(coords.y)} ${options.linger}`
+    await this.exec({ timeout: options.linger + 5_000 })`swift ${scriptPath} ${text} ${Math.round(coords.x)} ${Math.round(coords.y)} ${options.linger} ${options.backgroundColor}`
   }
 
   async findSeeElement(
@@ -2008,11 +2020,14 @@ class PeekabooDomLocator<TElement extends HTMLElement = HTMLElement> {
       'dom.annotate',
       { updatesMousePosition: false },
       async () => {
-        const coords = await this.resolveScreenCoordinates()
+        const normalizedOptions = normalizeDomAnnotationOptions(text, options)
+        const bounds = await this.resolveScreenBounds()
+        const coords = screenCoordinatesForAnnotationPosition(
+          bounds,
+          normalizedOptions.position,
+        )
 
-        await this.parent.annotateScreenText(text, coords, {
-          linger: options.linger || 1_000,
-        })
+        await this.parent.annotateScreenText(text, coords, normalizedOptions)
       },
     )
   }
@@ -3345,6 +3360,70 @@ function compareOcrVisualTextPositions(
   return leftBox.x - rightBox.x
 }
 
+function isEmojiAnnotation(text: string) {
+  return text.trim().length > 0 && !/[A-Za-z0-9]/.test(text)
+}
+
+function normalizeDomAnnotationOptions(
+  text: string,
+  options: DomAnnotationOptions,
+): NormalizedDomAnnotationOptions {
+  return {
+    backgroundColor: options.backgroundColor || (isEmojiAnnotation(text) ? 'clear' : '#00000088'),
+    linger: options.linger || 1_000,
+    position: options.position || 'center',
+  }
+}
+
+function screenCoordinatesForAnnotationPosition(
+  bounds: ScreenBounds,
+  position: AnnotationPosition,
+): ScreenCoordinates {
+  const [vertical, horizontal] = annotationPositionParts(position)
+  const offset = 12
+  let x = bounds.x + bounds.width / 2
+  let y = bounds.y + bounds.height / 2
+
+  if (horizontal === 'left' || horizontal === 'start') {
+    x = bounds.x - offset
+  } else if (horizontal === 'right' || horizontal === 'end') {
+    x = bounds.x + bounds.width + offset
+  }
+
+  if (vertical === 'above') {
+    y = bounds.y - offset
+  } else if (vertical === 'below') {
+    y = bounds.y + bounds.height + offset
+  }
+
+  return {
+    relativeTo: 'screen',
+    x: Math.round(x),
+    y: Math.round(y),
+  }
+}
+
+function annotationPositionParts(
+  position: AnnotationPosition,
+): [AnnotationVerticalPosition, AnnotationHorizontalPosition] {
+  const parts = position.split('-') as AnnotationBasePosition[]
+  let vertical: AnnotationVerticalPosition = 'center'
+  let horizontal: AnnotationHorizontalPosition = 'center'
+
+  for (const part of parts) {
+    if (part === 'above' || part === 'below') {
+      vertical = part
+    } else if (part === 'left' || part === 'right' || part === 'start' || part === 'end') {
+      horizontal = part
+    } else {
+      vertical = 'center'
+      horizontal = 'center'
+    }
+  }
+
+  return [vertical, horizontal]
+}
+
 function unionVisionBoxes(
   left: OcrTextOccurrence['boundingBox'],
   right: OcrTextOccurrence['boundingBox'],
@@ -3637,12 +3716,44 @@ let text = CommandLine.arguments.count > 1 ? CommandLine.arguments[1] : ""
 let screenX = CommandLine.arguments.count > 2 ? Double(CommandLine.arguments[2]) ?? 0 : 0
 let screenY = CommandLine.arguments.count > 3 ? Double(CommandLine.arguments[3]) ?? 0 : 0
 let durationMs = CommandLine.arguments.count > 4 ? Double(CommandLine.arguments[4]) ?? 1000 : 1000
+let backgroundColor = CommandLine.arguments.count > 5 ? CommandLine.arguments[5] : "#00000088"
 
 let app = NSApplication.shared
 app.setActivationPolicy(.accessory)
 
+func annotationColor(_ value: String) -> NSColor {
+  let trimmed = value.trimmingCharacters(in: .whitespacesAndNewlines)
+  if trimmed.isEmpty || trimmed.lowercased() == "clear" || trimmed.lowercased() == "transparent" {
+    return .clear
+  }
+
+  let hex = trimmed.hasPrefix("#") ? String(trimmed.dropFirst()) : trimmed
+  guard hex.count == 6 || hex.count == 8, let number = UInt64(hex, radix: 16) else {
+    return NSColor.black.withAlphaComponent(0.52)
+  }
+
+  let red: CGFloat
+  let green: CGFloat
+  let blue: CGFloat
+  let alpha: CGFloat
+
+  if hex.count == 8 {
+    red = CGFloat((number >> 24) & 0xff) / 255
+    green = CGFloat((number >> 16) & 0xff) / 255
+    blue = CGFloat((number >> 8) & 0xff) / 255
+    alpha = CGFloat(number & 0xff) / 255
+  } else {
+    red = CGFloat((number >> 16) & 0xff) / 255
+    green = CGFloat((number >> 8) & 0xff) / 255
+    blue = CGFloat(number & 0xff) / 255
+    alpha = 1
+  }
+
+  return NSColor(red: red, green: green, blue: blue, alpha: alpha)
+}
+
 let label = NSTextField(labelWithString: text)
-label.font = NSFont.systemFont(ofSize: 56, weight: .bold)
+label.font = NSFont.systemFont(ofSize: 34, weight: .bold)
 label.alignment = .center
 label.textColor = .white
 label.backgroundColor = .clear
@@ -3651,17 +3762,19 @@ label.isBezeled = false
 label.drawsBackground = false
 label.sizeToFit()
 
-let paddingX: CGFloat = 32
-let paddingY: CGFloat = 20
-let width = max(label.frame.width + paddingX, 96)
-let height = max(label.frame.height + paddingY, 80)
+let fillColor = annotationColor(backgroundColor)
+let hasBackground = fillColor.alphaComponent > 0.001
+let paddingX: CGFloat = hasBackground ? 22 : 0
+let paddingY: CGFloat = hasBackground ? 14 : 0
+let width = max(label.frame.width + paddingX, hasBackground ? 56 : label.frame.width)
+let height = max(label.frame.height + paddingY, hasBackground ? 48 : label.frame.height)
 let maxScreenY = NSScreen.screens.map { $0.frame.maxY }.max() ?? NSScreen.main?.frame.maxY ?? height
 let originX = CGFloat(screenX) - width / 2
 let originY = CGFloat(maxScreenY - screenY) - height / 2
 
 let contentView = NSView(frame: NSRect(x: 0, y: 0, width: width, height: height))
 contentView.wantsLayer = true
-contentView.layer?.backgroundColor = NSColor.black.withAlphaComponent(0.52).cgColor
+contentView.layer?.backgroundColor = fillColor.cgColor
 contentView.layer?.cornerRadius = min(width, height) / 2
 
 label.frame = NSRect(
