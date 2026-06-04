@@ -24,13 +24,20 @@ test('draft an X post', async () => {
 
   await dom.getByTestId('SideNav_NewTweet_Button').click()
   await dom.getByTestId('tweetTextarea_0').type(postDraft)
-  await dom.getByLabel('Add photos or video').click()
+  
+  const uploadVideo = async () => {
+    await dom.getByLabel('Add photos or video').click()
+    await computer.ocr('post.mp4').dblclick().catch(async () => {
+      await x.hotkey('cmd,shift,g', { noAutoFocus: true })
+      await x.hotkey('cmd,a', { noAutoFocus: true })
+      await x.type(uploadDirectory, { delay: -1, noAutoFocus: true })
+      await x.press('return', { noAutoFocus: true })
+      await computer.ocr('post.mp4').dblclick()
+    })
+  }
 
-  await x.hotkey('cmd,shift,g', { noAutoFocus: true })
-  await x.hotkey('cmd,a', { noAutoFocus: true })
-  await x.type(uploadDirectory, { delay: -1, noAutoFocus: true })
-  await x.press('return', { noAutoFocus: true })
-  await computer.ocr('post.mp4').dblclick()
+  await uploadVideo()
+
   await video.fastForward({ maxDuration: '2s' }, async () => {
     await dom.locator('[role="status"]', { hasText: 'Uploaded (100%)' }).waitFor({timeout: 10_000})
   })
@@ -43,13 +50,5 @@ test('draft an X post', async () => {
 
   await dom.locator('[aria-label="Remove media"]').click()
 
-  await dom.getByLabel('Add photos or video').click()
-  await x.hotkey('cmd,shift,g', { noAutoFocus: true })
-  await x.hotkey('cmd,a', { noAutoFocus: true })
-  await x.type(uploadDirectory, { delay: -1, noAutoFocus: true })
-  await x.press('return', { noAutoFocus: true })
-  await computer.ocr('post.mp4').dblclick()
-  await video.fastForward({ maxDuration: '2s' }, async () => {
-    await dom.locator('[role="status"]', { hasText: 'Uploaded (100%)' }).waitFor({timeout: 10_000})
-  })
+  await uploadVideo()
 })

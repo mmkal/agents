@@ -2914,10 +2914,6 @@ function domElementMatchesLocatorOptions(element, options) {
     return (await this.resolveInfo()).screenBounds
   }
 
-  private async resolveScreenCoordinates() {
-    return centerOfScreenBounds(await this.resolveScreenBounds())
-  }
-
   private async waitForInfo(options: { timeout: number }) {
     let deadline = Date.now() + options.timeout
     let extensionsRemaining = this.options.hasText ? 20 : 0
@@ -3709,11 +3705,20 @@ async function sleep(ms: number) {
 }
 
 async function readSystemMousePosition(exec: ComputerExec) {
-  const result = await exec`cliclick p`
+  const source = [
+    'import CoreGraphics',
+    'if let event = CGEvent(source: nil) {',
+    'let point = event.location',
+    'print("\\(Int(round(point.x))),\\(Int(round(point.y)))")',
+    '} else {',
+    'fatalError("Could not read mouse location")',
+    '}',
+  ].join('\n')
+  const result = await exec({ timeout: 5_000 })`swift -e ${source}`
   const match = result.stdout.trim().match(/^(-?\d+),(-?\d+)$/)
 
   if (!match) {
-    throw new Error(`Could not read mouse position from cliclick: ${result.stdout}`)
+    throw new Error(`Could not read mouse position from Swift/CoreGraphics: ${result.stdout}`)
   }
 
   return {
@@ -3741,7 +3746,15 @@ async function readSystemUserActionState(exec: ComputerExec): Promise<UserAction
 }
 
 async function moveSystemMousePosition(exec: ComputerExec, position: MousePosition) {
-  await exec`cliclick ${raw(`m:${formatMousePosition(position)}`)}`
+  const x = Math.round(position.x)
+  const y = Math.round(position.y)
+  const source = [
+    'import CoreGraphics',
+    `CGWarpMouseCursorPosition(CGPoint(x: ${x}, y: ${y}))`,
+    'CGAssociateMouseAndMouseCursorPosition(1)',
+  ].join('\n')
+
+  await exec({ timeout: 5_000 })`swift -e ${source}`
 }
 
 async function activateForegroundApp(exec: ComputerExec, app: string) {
