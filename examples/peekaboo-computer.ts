@@ -135,6 +135,10 @@ type DomProxy<TElement extends HTMLElement> = {
     : TElement[Key] | Promise<TElement[Key]>
 }
 
+type DomLocatorOptions = {
+  hasText?: string | RegExp
+}
+
 type ScrollOptions = {
   delay?: number
   jump?: boolean
@@ -352,7 +356,7 @@ type PeekabooDomParent = PeekabooLocatorParent & {
 
 export class PeekabooComputer
   extends EventEmitter
-  implements AsyncDisposable, PeekabooCommandParent
+  implements AsyncDisposable, PeekabooOcrParent
 {
   assetsDirectory: string
   directory: string
@@ -619,6 +623,14 @@ export class PeekabooComputer
     })
   }
 
+  ocr(text: string, options: OcrOptions = {}) {
+    return new PeekabooOcrLocator({
+      options,
+      parent: this,
+      text,
+    })
+  }
+
   async primaryScreenBounds(): Promise<ScreenBounds> {
     if (this.screenBounds) {
       return this.screenBounds
@@ -661,6 +673,31 @@ export class PeekabooComputer
       scriptPath: await writeVisionOcrScript(this.assetsDirectory),
     })
   }
+
+  async findOcrMatch(options: OcrMatchOptions) {
+    return await this.findOcrMatchInScreenRegion(
+      await this.primaryScreenBounds(),
+      options,
+    )
+  }
+
+  async focus() {}
+
+  async deadAir<T>(action: () => Promise<T>) {
+    return await action()
+  }
+
+  async press(keys: string) {
+    await this.exec`peekaboo press ${keys} --no-auto-focus`
+  }
+
+  async type(text: string, options: TypeOptions = {}) {
+    await this.exec`peekaboo type --text ${text} --profile ${raw(options.profile || 'linear')} --delay ${raw(String(options.delay || 10))} --no-auto-focus`
+  }
+
+  recordAutozoomBounds() {}
+
+  recordAutozoomPoint() {}
 
   async readFile(path: string) {
     return await fs.readFile(this.resolvePath(path), 'utf8')
@@ -1002,7 +1039,7 @@ class PeekabooWindow implements AsyncDisposable, PeekabooOcrParent {
           if (options.linger) {
             await this.sleep(options.linger)
           }
-          if (keys.startsWith('cmd,') || keys.startsWith('cmd+')) {
+          if (this.app === 'Cursor' && (keys.startsWith('cmd,') || keys.startsWith('cmd+'))) {
             await this.press('escape') // not sure if this is a peekaboo bug or me being dumb, but without this cmd stays "down" after the hotkey is pressed
           }
         },
@@ -2265,8 +2302,12 @@ class PeekabooDom {
     )
   }
 
-  locator<TElement extends HTMLElement = HTMLElement>(selector: string) {
+  locator<TElement extends HTMLElement = HTMLElement>(
+    selector: string,
+    options: DomLocatorOptions = {},
+  ) {
     return new PeekabooDomLocator<TElement>({
+      options,
       parent: this.parent,
       selector,
     })
@@ -2275,17 +2316,24 @@ class PeekabooDom {
   getByTestId<TElement extends HTMLElement = HTMLElement>(testId: string) {
     return this.locator<TElement>(`[data-testid=${JSON.stringify(testId)}]`)
   }
+
+  getByLabel<TElement extends HTMLElement = HTMLElement>(label: string) {
+    return this.locator<TElement>(`[aria-label=${JSON.stringify(label)}]`)
+  }
 }
 
 class PeekabooDomLocator<TElement extends HTMLElement = HTMLElement> {
+  private options: DomLocatorOptions
   private parent: PeekabooDomParent
   private pendingProxyWrites = new Set<Promise<unknown>>()
   private selector: string
 
   constructor(options: {
+    options: DomLocatorOptions
     parent: PeekabooDomParent
     selector: string
   }) {
+    this.options = options.options
     this.parent = options.parent
     this.selector = options.selector
   }
@@ -2443,7 +2491,9 @@ class PeekabooDomLocator<TElement extends HTMLElement = HTMLElement> {
     const source = [
       '(() => {',
       `const selector = ${JSON.stringify(this.selector)};`,
-      'const element = document.querySelector(selector);',
+      `const options = ${domLocatorOptionsSource(this.options)};`,
+      domElementMatchesLocatorOptionsSource,
+      'const element = Array.from(document.querySelectorAll(selector)).find((candidate) => domElementMatchesLocatorOptions(candidate, options));',
       "if (!element) throw new Error('DOM element not found: ' + selector);",
       `const fn = (${fnSource});`,
       `const args = ${JSON.stringify(args)};`,
@@ -2537,14 +2587,37 @@ class PeekabooDomLocator<TElement extends HTMLElement = HTMLElement> {
   }
 
   private async waitForInfo(options: { timeout: number }) {
-    const deadline = Date.now() + options.timeout
+    let deadline = Date.now() + options.timeout
+    let extensionsRemaining = this.options.hasText ? 20 : 0
+    let lastCandidateText = ''
     let lastError: unknown
+    let textChangedSinceDeadline = false
 
-    while (Date.now() < deadline) {
+    while (true) {
       try {
         return await this.resolveInfo()
       } catch (error) {
         lastError = error
+
+        if (this.options.hasText) {
+          const candidateText = await this.candidateTextSnapshot().catch(() => '')
+
+          if (candidateText && candidateText !== lastCandidateText) {
+            lastCandidateText = candidateText
+            textChangedSinceDeadline = true
+          }
+        }
+
+        if (Date.now() >= deadline) {
+          if (textChangedSinceDeadline && extensionsRemaining > 0) {
+            extensionsRemaining -= 1
+            textChangedSinceDeadline = false
+            deadline = Date.now() + options.timeout
+          } else {
+            break
+          }
+        }
+
         await this.parent.sleep(100)
       }
     }
@@ -2552,9 +2625,25 @@ class PeekabooDomLocator<TElement extends HTMLElement = HTMLElement> {
     throw new Error(
       [
         `Timed out waiting for DOM element: ${this.selector}`,
+        lastCandidateText ? `Last candidate text:\n${lastCandidateText}` : '',
         lastError instanceof Error ? lastError.message : String(lastError),
       ].filter(Boolean).join('\n'),
     )
+  }
+
+  private async candidateTextSnapshot() {
+    const source = [
+      '(() => {',
+      `const selector = ${JSON.stringify(this.selector)};`,
+      'const candidates = Array.from(document.querySelectorAll(selector));',
+      'return candidates.slice(0, 10).map((candidate, index) => {',
+      'const text = [candidate.innerText, candidate.textContent, candidate.getAttribute("aria-label"), candidate.getAttribute("aria-valuetext")].filter(Boolean).join(" ").replace(/\\s+/g, " ").trim();',
+      'return `${index}: ${text}`;',
+      '}).filter((text) => text.trim()).join("\\n");',
+      '})()',
+    ].join(' ')
+
+    return await this.parent.executeChromeJavaScript<string>(source)
   }
 
   private async setProxyProperty(property: string, value: any) {
@@ -3025,7 +3114,7 @@ async function waitForExternalPeekabooWindow(
       .filter((window) =>
         options.windowTitle
           ? window.window_title.includes(options.windowTitle)
-          : window.window_title.trim().length > 0,
+          : isExternalWindowCandidate(app, window),
       )
       .sort((left, right) => right.window_id - left.window_id)
 
@@ -3105,6 +3194,20 @@ async function listPeekabooWindows(
   return Array.isArray(payload.data && payload.data.windows)
     ? payload.data.windows
     : []
+}
+
+function isExternalWindowCandidate(app: string, window: PeekabooWindowInfo) {
+  const title = window.window_title.trim()
+
+  if (title.length === 0) {
+    return false
+  }
+
+  if (app.toLowerCase().includes('chrome')) {
+    return title.includes(' - Google Chrome')
+  }
+
+  return true
 }
 
 async function findOcrMatchInCapturedImage(options: {
@@ -3800,6 +3903,30 @@ function describeSeeElement(element: PeekabooSeeElement) {
     title: element.title,
   })}`
 }
+
+function domLocatorOptionsSource(options: DomLocatorOptions) {
+  const hasText = options.hasText instanceof RegExp
+    ? { flags: options.hasText.flags, pattern: options.hasText.source, type: 'regex' }
+    : options.hasText === undefined
+      ? undefined
+      : { text: options.hasText, type: 'text' }
+
+  return JSON.stringify({ hasText })
+}
+
+const domElementMatchesLocatorOptionsSource = `
+function domElementMatchesLocatorOptions(element, options) {
+  if (!options.hasText) return true;
+
+  const text = element.innerText || element.textContent || '';
+
+  if (options.hasText.type === 'regex') {
+    return new RegExp(options.hasText.pattern, options.hasText.flags).test(text);
+  }
+
+  return text.includes(options.hasText.text);
+}
+`
 
 function extendOcrMatchesUntil(options: {
   matches: OcrTextOccurrence[]
