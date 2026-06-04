@@ -184,6 +184,22 @@ type VideoSpan = {
   start: number
 }
 
+type VideoDuration = `${number}ms` | `${number}s`
+
+type VideoFastForwardOptions =
+  | {
+      maxDuration: VideoDuration
+      speed?: never
+    }
+  | {
+      maxDuration?: never
+      speed: `${number}x`
+    }
+
+type VideoFastForwardSpan = VideoSpan & {
+  speed: number
+}
+
 type VideoStepSpan = VideoSpan & {
   title: string
 }
@@ -221,6 +237,10 @@ type AutozoomCamera = {
 type AutozoomCameraSegment = VideoSpan & {
   from: AutozoomCamera
   to: AutozoomCamera
+}
+
+type TightVideoSegment = VideoSpan & {
+  speed: number
 }
 
 type PeekabooBounds = {
@@ -1537,6 +1557,8 @@ class PeekabooVideo implements AsyncDisposable {
   private deadAirDepth = 0
   private deadAirSpans: VideoSpan[] = []
   private detachStepListeners?: () => void
+  private fastForwardDepth = 0
+  private fastForwardSpans: VideoFastForwardSpan[] = []
   private finish?: Promise<void>
   private helperPath: string
   private metaPath: string
@@ -1686,6 +1708,39 @@ class PeekabooVideo implements AsyncDisposable {
         end: Math.round(endMs),
         start: Math.round(startMs),
       })
+    }
+  }
+
+  async fastForward<T>(
+    options: VideoFastForwardOptions,
+    action: () => Promise<T>,
+  ) {
+    if (!this.startedAt || this.saved || this.fastForwardDepth > 0) {
+      return await action()
+    }
+
+    const startMs = performance.now() - this.startedAt
+    this.fastForwardDepth += 1
+
+    try {
+      return await action()
+    } finally {
+      this.fastForwardDepth -= 1
+
+      if (!this.saved) {
+        const endMs = performance.now() - this.startedAt
+        const start = Math.round(startMs)
+        const end = Math.round(endMs)
+        const speed = videoFastForwardSpeed(options, end - start)
+
+        if (speed > 1 && end > start) {
+          this.fastForwardSpans.push({
+            end,
+            speed,
+            start,
+          })
+        }
+      }
     }
   }
 
@@ -1884,6 +1939,7 @@ class PeekabooVideo implements AsyncDisposable {
       `${JSON.stringify(
         {
           deadAir: mergeVideoSpans(this.deadAirSpans),
+          fastForward: normalizeVideoFastForwardSpans(this.fastForwardSpans),
           outputs: {
             captioned: 'captioned.mp4',
             raw: 'raw.mp4',
@@ -1920,26 +1976,28 @@ class PeekabooVideo implements AsyncDisposable {
 
   private async writeTightVideo() {
     const deadAir = mergeVideoSpans(this.deadAirSpans)
+    const fastForward = normalizeVideoFastForwardSpans(this.fastForwardSpans)
 
-    if (deadAir.length === 0) {
+    if (deadAir.length === 0 && fastForward.length === 0) {
       await fs.copyFile(this.captionedPath, this.tightPath)
       return
     }
 
-    const selectExpression = `not(${deadAir
-      .map(
-        (span) =>
-          `between(t,${formatSeconds(span.start)},${formatSeconds(span.end)})`,
-      )
-      .join('+')})`
+    const videoFilter = tightVideoFilter({
+      deadAir,
+      fastForward,
+      finalEnd: this.videoEndedAt || this.timestamp() || 0,
+    })
+
+    if (!videoFilter) {
+      await fs.copyFile(this.captionedPath, this.tightPath)
+      return
+    }
 
     await this.writeVideo({
       inputPath: this.captionedPath,
       outputPath: this.tightPath,
-      videoFilter: {
-        kind: 'simple',
-        value: `select='${selectExpression}',setpts=N/(60*TB)`,
-      },
+      videoFilter,
     })
   }
 
@@ -3496,6 +3554,63 @@ function formatSeconds(ms: number) {
   return value || '0'
 }
 
+function parseVideoDurationMs(value: VideoDuration) {
+  const match = /^(\d+(?:\.\d+)?)(ms|s)$/.exec(value)
+
+  if (!match) {
+    throw new Error(`Invalid video duration: ${value}`)
+  }
+
+  const amount = Number(match[1])
+
+  if (!Number.isFinite(amount) || amount <= 0) {
+    throw new Error(`Invalid video duration: ${value}`)
+  }
+
+  return match[2] === 's' ? amount * 1000 : amount
+}
+
+function parseVideoSpeed(value: `${number}x`) {
+  const match = /^(\d+(?:\.\d+)?)x$/.exec(value)
+
+  if (!match) {
+    throw new Error(`Invalid video speed: ${value}`)
+  }
+
+  const speed = Number(match[1])
+
+  if (!Number.isFinite(speed) || speed <= 0) {
+    throw new Error(`Invalid video speed: ${value}`)
+  }
+
+  return roundVideoSpeed(speed)
+}
+
+function videoFastForwardSpeed(
+  options: VideoFastForwardOptions,
+  durationMs: number,
+) {
+  if (options.speed) {
+    return parseVideoSpeed(options.speed)
+  }
+
+  const maxDurationMs = parseVideoDurationMs(options.maxDuration)
+
+  if (durationMs <= maxDurationMs) {
+    return 1
+  }
+
+  return roundVideoSpeed(durationMs / maxDurationMs)
+}
+
+function roundVideoSpeed(value: number) {
+  return Math.round(value * 1000) / 1000
+}
+
+function formatVideoSpeed(value: number) {
+  return String(roundVideoSpeed(value))
+}
+
 function assCaptionsForSteps(steps: VideoStepSpan[]) {
   const events = normalizeVideoStepSpans(steps)
     .map(
@@ -3545,6 +3660,142 @@ function formatAssTime(ms: number) {
   const hours = Math.floor(totalMinutes / 60)
 
   return `${hours}:${String(minutes).padStart(2, '0')}:${String(seconds).padStart(2, '0')}.${String(centiseconds).padStart(2, '0')}`
+}
+
+function tightVideoFilter(options: {
+  deadAir: VideoSpan[]
+  fastForward: VideoFastForwardSpan[]
+  finalEnd: number
+}): VideoFilter | undefined {
+  const segments = tightVideoSegments(options)
+
+  if (segments.length === 0 || !tightVideoSegmentsNeedFilter(segments, options.finalEnd)) {
+    return undefined
+  }
+
+  const filters: string[] = []
+  const labels: string[] = []
+
+  for (let index = 0; index < segments.length; index += 1) {
+    const segment = segments[index]
+    const label = `tight${index}`
+    labels.push(`[${label}]`)
+
+    const setpts = segment.speed === 1
+      ? 'PTS-STARTPTS'
+      : `(PTS-STARTPTS)/${formatVideoSpeed(segment.speed)}`
+
+    filters.push(
+      `[0:v]trim=start=${formatSeconds(segment.start)}:end=${formatSeconds(segment.end)},setpts=${setpts}[${label}]`,
+    )
+  }
+
+  const outputLabel = labels.length === 1 ? labels[0].slice(1, -1) : 'tightout'
+
+  if (labels.length > 1) {
+    filters.push(`${labels.join('')}concat=n=${labels.length}:v=1:a=0[${outputLabel}]`)
+  }
+
+  return {
+    kind: 'complex',
+    outputLabel,
+    value: filters.join(';'),
+  }
+}
+
+function tightVideoSegments(options: {
+  deadAir: VideoSpan[]
+  fastForward: VideoFastForwardSpan[]
+  finalEnd: number
+}): TightVideoSegment[] {
+  const finalEnd = Math.max(0, Math.round(options.finalEnd))
+
+  if (finalEnd === 0) {
+    return []
+  }
+
+  const deadAir = mergeVideoSpans(
+    options.deadAir
+      .map((span) => clipVideoSpan(span, finalEnd))
+      .filter((span): span is VideoSpan => Boolean(span)),
+  )
+  const fastForward = normalizeVideoFastForwardSpans(
+    options.fastForward
+      .map((span) => {
+        const clipped = clipVideoSpan(span, finalEnd)
+        return clipped ? { ...clipped, speed: span.speed } : undefined
+      })
+      .filter((span): span is VideoFastForwardSpan => Boolean(span)),
+  )
+  const boundaries = new Set([0, finalEnd])
+
+  for (const span of [...deadAir, ...fastForward]) {
+    boundaries.add(span.start)
+    boundaries.add(span.end)
+  }
+
+  const sortedBoundaries = [...boundaries].sort((left, right) => left - right)
+  const segments: TightVideoSegment[] = []
+
+  for (let index = 0; index < sortedBoundaries.length - 1; index += 1) {
+    const start = sortedBoundaries[index]
+    const end = sortedBoundaries[index + 1]
+
+    if (end <= start) {
+      continue
+    }
+
+    if (deadAir.some((span) => videoSpansOverlap(span, { end, start }))) {
+      continue
+    }
+
+    const speed = Math.max(
+      1,
+      ...fastForward
+        .filter((span) => videoSpansOverlap(span, { end, start }))
+        .map((span) => span.speed),
+    )
+    const previous = segments[segments.length - 1]
+
+    if (previous && previous.end === start && previous.speed === speed) {
+      previous.end = end
+      continue
+    }
+
+    segments.push({ end, speed, start })
+  }
+
+  return segments
+}
+
+function tightVideoSegmentsNeedFilter(
+  segments: TightVideoSegment[],
+  finalEnd: number,
+) {
+  return !(
+    segments.length === 1 &&
+    segments[0].start === 0 &&
+    segments[0].end === Math.round(finalEnd) &&
+    segments[0].speed === 1
+  )
+}
+
+function clipVideoSpan(
+  span: VideoSpan,
+  finalEnd: number,
+): VideoSpan | undefined {
+  const start = clampNumber(Math.round(span.start), 0, finalEnd)
+  const end = clampNumber(Math.round(span.end), 0, finalEnd)
+
+  if (end <= start) {
+    return undefined
+  }
+
+  return { end, start }
+}
+
+function videoSpansOverlap(left: VideoSpan, right: VideoSpan) {
+  return left.start < right.end && right.start < left.end
 }
 
 function autozoomVideoFilter(options: {
@@ -3742,6 +3993,19 @@ function normalizeVideoStepSpans(spans: VideoStepSpan[]): VideoStepSpan[] {
     .filter((span) => span.end > span.start)
     .sort((left, right) => left.start - right.start)
     .map((span) => ({ ...span }))
+}
+
+function normalizeVideoFastForwardSpans(
+  spans: VideoFastForwardSpan[],
+): VideoFastForwardSpan[] {
+  return spans
+    .filter((span) => span.end > span.start && span.speed > 1)
+    .sort((left, right) => left.start - right.start)
+    .map((span) => ({
+      end: span.end,
+      speed: roundVideoSpeed(span.speed),
+      start: span.start,
+    }))
 }
 
 function normalizeVideoZoomEvents(

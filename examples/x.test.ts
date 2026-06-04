@@ -42,7 +42,9 @@ test('draft an X post', async () => {
   await x.sleep(500)
   await computer.ocr('post.mp4').dblclick()
   await x.acceptCurrentMousePosition()
-  await dom.locator('[role="status"]', { hasText: 'Uploaded (100%)' }).waitFor({timeout: 10_000})
+  await video.fastForward({ maxDuration: '2s' }, async () => {
+    await dom.locator('[role="status"]', { hasText: 'Uploaded (100%)' }).waitFor({timeout: 10_000})
+  })
 
   await dom.getByTestId('tweetButton').hover({ linger: 1000 })
   await dom.getByTestId('tweetButton').annotate('😇', { position: 'above' })
@@ -60,5 +62,7 @@ test('draft an X post', async () => {
   await x.sleep(500)
   await computer.ocr('post.mp4').dblclick()
   await x.acceptCurrentMousePosition()
-  await dom.locator('[role="status"]', { hasText: 'Uploaded (100%)' }).waitFor({timeout: 10_000})
+  await video.fastForward({ maxDuration: '2s' }, async () => {
+    await dom.locator('[role="status"]', { hasText: 'Uploaded (100%)' }).waitFor({timeout: 10_000})
+  })
 })
