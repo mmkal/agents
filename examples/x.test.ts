@@ -38,7 +38,6 @@ test('draft an X post', async () => {
     await dom.locator('[role="status"]', { hasText: 'Uploaded (100%)' }).waitFor({timeout: 10_000})
   })
 
-  await dom.getByTestId('tweetButton').hover({ linger: 1 })
   await dom.getByTestId('tweetButton').annotate('😇', { position: 'above', linger: 1000 })
 
   await video.save()

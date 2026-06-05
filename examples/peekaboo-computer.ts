@@ -44,6 +44,18 @@ type GuardedActionOptions = {
   updatesUserActionState: boolean
 }
 
+type ActionMouseMovementOptions = {
+  duration?: number
+  enabled: boolean
+  steps?: number
+}
+
+type ActionMouseMovementState = {
+  duration: number
+  enabled: boolean
+  steps: number
+}
+
 type MousePosition = {
   x: number
   y: number
@@ -367,8 +379,10 @@ type PeekabooCommandParent = {
     options: GuardedActionOptions,
     action: () => Promise<T>,
   ): Promise<T>
+  moveMouseForAction(coords: ScreenCoordinates): Promise<void>
   readUserActionState(): Promise<UserActionState>
   restoreUserActionState(state: UserActionState): Promise<void>
+  setActionMouseMovement(options: ActionMouseMovementOptions): void
   sleep(ms: number): Promise<void>
 }
 
@@ -753,6 +767,11 @@ export class PeekabooComputer
   exec: ComputerExec
   parentDirectory: string
   private activeVideo?: PeekabooVideo
+  private actionMouseMovement: ActionMouseMovementState = {
+    duration: 150,
+    enabled: false,
+    steps: 5,
+  }
   private userActionGuard: PeekabooUserActionGuard
   private screenBounds?: ScreenBounds
   private screenCaptureIndex = 0
@@ -894,6 +913,30 @@ export class PeekabooComputer
 
   async acceptCurrentUserActionState() {
     await this.userActionGuard.acceptCurrentState()
+  }
+
+  setActionMouseMovement(options: ActionMouseMovementOptions) {
+    this.actionMouseMovement = {
+      duration: options.duration === undefined
+        ? this.actionMouseMovement.duration
+        : options.duration,
+      enabled: options.enabled,
+      steps: options.steps === undefined
+        ? this.actionMouseMovement.steps
+        : options.steps,
+    }
+  }
+
+  async moveMouseForAction(coords: ScreenCoordinates) {
+    if (!this.actionMouseMovement.enabled) {
+      return
+    }
+
+    await this.automation.move({
+      ...this.toScreenCoordinates(coords),
+      duration: this.actionMouseMovement.duration,
+      steps: this.actionMouseMovement.steps,
+    })
   }
 
   expectedUserActionState() {
@@ -1245,6 +1288,7 @@ class PeekabooMenuBarLocator {
   }
 
   private async clickAt(coords: ScreenCoordinates) {
+    await this.parent.moveMouseForAction(coords)
     await this.parent.automation.click(coords)
   }
 
@@ -1312,6 +1356,7 @@ class PeekabooWindow implements AsyncDisposable, PeekabooOcrParent {
       async () => {
         await this.focus()
         const coords = this.toScreenCoordinates(windowCoordinatesFromCoordsString(target.coords))
+        await this.moveMouseForAction(coords)
         await this.automation.click(coords)
         this.recordAutozoomPoint('click', coords)
         await this.sleep(100)
@@ -1598,6 +1643,7 @@ class PeekabooWindow implements AsyncDisposable, PeekabooOcrParent {
 
   async startVideo() {
     await fs.mkdir(this.assetsDirectory, { recursive: true })
+    this.parent.setActionMouseMovement({ enabled: true })
     const videoPath = join(
       this.assetsDirectory,
       `video-${Date.now()}-${this.windowId}`,
@@ -1733,6 +1779,14 @@ class PeekabooWindow implements AsyncDisposable, PeekabooOcrParent {
 
   async acceptCurrentUserActionState() {
     await this.userActionGuard.acceptCurrentState()
+  }
+
+  setActionMouseMovement(options: ActionMouseMovementOptions) {
+    this.parent.setActionMouseMovement(options)
+  }
+
+  async moveMouseForAction(coords: ScreenCoordinates) {
+    await this.parent.moveMouseForAction(coords)
   }
 
   expectedUserActionState() {
@@ -3679,6 +3733,7 @@ class PeekabooLocator {
         const coords = this.parent.toScreenCoordinates(
           windowCoordinatesFromCoordsString(this.target.coords),
         )
+        await this.parent.moveMouseForAction(coords)
         await this.parent.automation.click({ ...coords, double: true })
         this.parent.recordAutozoomPoint(
           'click',
@@ -3724,7 +3779,9 @@ class PeekabooSeeLocator {
           throw new Error(`See element has no bounds: ${describeSeeElement(element)}`)
         }
 
-        await this.parent.automation.click(centerOfScreenBounds(bounds))
+        const coords = centerOfScreenBounds(bounds)
+        await this.parent.moveMouseForAction(coords)
+        await this.parent.automation.click(coords)
         this.recordAutozoom('click', element)
         await this.parent.sleep(100)
       },
@@ -3884,10 +3941,13 @@ class PeekabooDomLocator<TElement extends HTMLElement = HTMLElement> {
   async annotate(text: string, options: DomAnnotationOptions = {}) {
     await this.parent.guardedAction(
       'dom.annotate',
-      { updatesUserActionState: false },
+      { updatesUserActionState: true },
       async () => {
         const normalizedOptions = normalizeDomAnnotationOptions(text, options)
         const annotationId = `macwright-dom-annotation-${Date.now()}-${Math.random().toString(16).slice(2)}`
+        await this.parent.focus()
+        const info = await this.waitForInfo({ timeout: 5_000 })
+        await this.parent.moveMouseForAction(centerOfScreenBounds(info.screenBounds))
 
         await this.parent.executeChromeJavaScript(
           {
@@ -4072,6 +4132,7 @@ class PeekabooDomLocator<TElement extends HTMLElement = HTMLElement> {
         const bounds = (await this.waitForInfo({ timeout: 5_000 })).screenBounds
         const coords = centerOfScreenBounds(bounds)
 
+        await this.parent.moveMouseForAction(coords)
         await this.parent.automation.click(coords)
         this.parent.recordAutozoomBounds('click', bounds)
         await this.parent.sleep(100)
@@ -4309,10 +4370,7 @@ function domElementMatchesLocatorOptions(element, options) {
       await this.parent.assertUserActionStill('during dom.waitFor')
 
       try {
-        const start = Date.now()
-        const info = await this.resolveInfo()
-        console.log('resolveInfo took', Date.now() - start, this.selector, this.options)
-        return info
+        return await this.resolveInfo()
       } catch (error) {
         lastError = error
 
@@ -4410,6 +4468,7 @@ class PeekabooOcrLocator {
       async () => {
         const coords = await this.screenCoordinates(position)
         await this.parent.focus()
+        await this.parent.moveMouseForAction(coords)
         await this.parent.automation.click(coords)
         this.parent.recordAutozoomPoint('click', coords)
         await this.parent.sleep(100)
@@ -4431,6 +4490,7 @@ class PeekabooOcrLocator {
         const to = screenCoordinatesForOcrPosition(bounds, 'end')
 
         await this.parent.focus()
+        await this.parent.moveMouseForAction(from)
         await this.parent.automation.drag({
           duration: 100,
           fromX: from.x,
@@ -4473,6 +4533,7 @@ class PeekabooOcrLocator {
         const coords = await this.screenCoordinates(position)
 
         await this.parent.focus()
+        await this.parent.moveMouseForAction(coords)
         await this.parent.automation.click({ ...coords, double: true })
         this.parent.recordAutozoomPoint('click', coords)
         await this.parent.sleep(100)
@@ -4574,6 +4635,11 @@ class PeekabooOcrLocator {
         })
 
         await this.parent.focus()
+        await this.parent.moveMouseForAction({
+          relativeTo: 'screen',
+          x: bounds.x,
+          y: bounds.y,
+        })
         await this.parent.automation.drag({
           duration: 100,
           fromX: bounds.x,
