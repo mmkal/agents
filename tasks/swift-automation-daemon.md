@@ -5,7 +5,7 @@ size: large
 
 # Swift Automation Daemon
 
-Status summary: implementation is well underway. `examples/peekaboo-computer.ts` now starts a JIT-compiled Swift HTTP daemon and routes permissions, window operations, mouse/keyboard/scroll actions, clipboard, user-action state, screenshot capture, Vision OCR, Chrome JavaScript evaluation, and Chrome Apple Events preference setup through it. TypeScript and daemon compile smoke checks pass; full UI demo validation is currently blocked because this session reports `loginwindow` as the focused CG window, and even the old `peekaboo click` path refuses to interact in that state.
+Status summary: implementation is well underway. `examples/peekaboo-computer.ts` now starts a JIT-compiled Swift HTTP daemon and routes permissions, window operations, mouse/keyboard/scroll actions, clipboard, user-action state, screenshot capture, Vision OCR, Chrome JavaScript evaluation, Chrome Apple Events preference setup, and step narration through it. TypeScript and daemon compile smoke checks pass; full UI demo validation is currently blocked because this session reports `loginwindow` as the focused CG window, and even the old `peekaboo click` path refuses to interact in that state.
 
 ## Goal
 
@@ -52,3 +52,4 @@ The API surface used by `examples/x.test.ts`, `examples/sqlfu.test.ts`, and `exa
 - 2026-06-05: Moved `allowJavaScriptFromAppleEvents('Google Chrome')` into the daemon. The daemon now probes Chrome JavaScript Apple Events, captures/restores tab URLs, quits Chrome, patches both preference locations, restarts Chrome, and verifies the setting.
 - 2026-06-05: Added a focused regression test for the daemon-backed examples so `x.test.ts`, `sqlfu.test.ts`, `tsc-cursor-compwright.test.ts`, and `peekaboo-computer.ts` do not regain direct Peekaboo CLI command calls.
 - 2026-06-05: Cached the compiled Swift daemon binary under `/tmp/macwright-swift-cache` by source hash, so repeated `PeekabooComputer.create()` calls skip recompilation until the daemon source changes.
+- 2026-06-05: Moved `computer.say(...)` into `/speech/say`; the daemon terminates the previous `say` process before starting the next one. Updated `sqlfu.test.ts` to use `computer.say(...)` instead of raw shell `say`.

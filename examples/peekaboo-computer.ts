@@ -597,6 +597,10 @@ class MacAutomationServer {
     await this.post('/keyboard/type', { delay: options.delay, text })
   }
 
+  async say(message: string) {
+    await this.post('/speech/say', { message })
+  }
+
   async clipboardGet() {
     const result = await this.post<{ text: string }>('/clipboard/get', {})
     return result.text
@@ -823,7 +827,7 @@ export class PeekabooComputer
   }
 
   async say(message: string) {
-    await this.exec`say ${message}`
+    await this.automation.say(message)
   }
 
   on(event: 'step:end', listener: (event: StepEndedEvent) => void): this
@@ -2418,6 +2422,7 @@ import Vision
 final class AutomationServer {
   private var shouldStop = false
   private var clipboardSlots: [String: String] = [:]
+  private var sayProcess: Process?
 
   func run() throws {
     let server = socket(AF_INET, SOCK_STREAM, 0)
@@ -2474,6 +2479,7 @@ final class AutomationServer {
   private func route(path: String, body: [String: Any]) throws -> [String: Any] {
     switch path {
     case "/shutdown":
+      sayProcess?.terminate()
       shouldStop = true
       return ["ok": true]
     case "/permissions":
@@ -2568,6 +2574,9 @@ final class AutomationServer {
       return ["ok": true]
     case "/keyboard/type":
       typeText(requiredString(body, "text"), delayMs: int(body, "delay") ?? 10)
+      return ["ok": true]
+    case "/speech/say":
+      say(requiredString(body, "message"))
       return ["ok": true]
     case "/clipboard/get":
       return ["text": NSPasteboard.general.string(forType: .string) ?? ""]
@@ -3204,6 +3213,18 @@ final class AutomationServer {
         usleep(useconds_t(delayMs * 1000))
       }
     }
+  }
+
+  private func say(_ message: String) {
+    if let sayProcess, sayProcess.isRunning {
+      sayProcess.terminate()
+    }
+
+    let process = Process()
+    process.executableURL = URL(fileURLWithPath: "/usr/bin/say")
+    process.arguments = [message]
+    try? process.run()
+    sayProcess = process
   }
 
   private func postMouse(type: CGEventType, point: CGPoint) {

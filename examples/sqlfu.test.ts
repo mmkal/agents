@@ -7,7 +7,7 @@ const sqlfuPackageRoot = '/Users/mmkal/src/sqlfu/packages/sqlfu'
 test('sqlfu demo', async () => {
   await using computer = await PeekabooComputer.create(expect.getState())
   computer.on('step:start', ({ title }) => {
-    void computer.exec`say ${title.replace('tsc', 'T.S.C')}`
+    void computer.say(title.replace('tsc', 'T.S.C')).catch(() => {})
   })
 
   await computer.writeJsonFile('package.json', {
