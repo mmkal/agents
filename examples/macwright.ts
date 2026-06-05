@@ -86,7 +86,7 @@ type UserActionChangedEvent = {
   location: string
 }
 
-type MacwrightStatusState = 'failed' | 'paused' | 'playing' | 'succeeded'
+type MacwrightStatusState = 'paused' | 'playing' | 'stopped'
 
 type MacwrightStatusAction = 'continue' | 'fail'
 
@@ -490,7 +490,10 @@ class MacAutomationServer {
     await fs.writeFile(sourcePath, macAutomationServerSwiftSource)
     const binaryPath = await this.compiledBinaryPath(sourcePath)
 
-    const child = spawn(binaryPath, [], { stdio: ['ignore', 'pipe', 'pipe'] })
+    const child = spawn(binaryPath, [], {
+      detached: true,
+      stdio: ['ignore', 'pipe', 'pipe'],
+    })
     this.child = child
     this.port = await this.waitForPort(child)
   }
@@ -905,9 +908,9 @@ export class Macwright
 
   async [Symbol.asyncDispose]() {
     await this.automation.finishStatusAndDetach({
-      detail: this.failed ? 'Session failed' : 'Session completed',
+      detail: this.failed ? 'Session stopped after error' : 'Session stopped',
       path: this.parentDirectory,
-      state: this.failed ? 'failed' : 'succeeded',
+      state: 'stopped',
       title: basename(this.directory),
     })
     await fs.rm(this.directory, { force: true, recursive: true })
@@ -1034,7 +1037,7 @@ export class Macwright
     await this.updateStatus({
       detail: error instanceof Error ? error.message : String(error),
       path: this.parentDirectory,
-      state: 'failed',
+      state: 'stopped',
       title: basename(this.directory),
     }).catch(() => {})
   }
@@ -2806,7 +2809,7 @@ final class MacwrightStatusItemController: NSObject, NSMenuDelegate {
     let currentTitle = title
     let currentPath = path
     condition.unlock()
-    update(state: "failed", title: currentTitle, detail: "Failure requested from status menu", path: currentPath)
+    update(state: "stopped", title: currentTitle, detail: "Failure requested from status menu", path: currentPath)
   }
 
   @objc private func copyPath() {
@@ -2887,9 +2890,8 @@ final class MacwrightStatusItemController: NSObject, NSMenuDelegate {
 
   private func stateLabel() -> String {
     switch state {
-    case "failed": return "failed"
     case "paused": return "paused"
-    case "succeeded": return "succeeded"
+    case "stopped": return "stopped"
     default: return "running"
     }
   }
@@ -2921,23 +2923,9 @@ final class MacwrightStatusItemController: NSObject, NSMenuDelegate {
       NSColor.systemOrange.setFill()
       NSBezierPath(rect: NSRect(x: rect.minX + 1, y: rect.minY, width: 2.5, height: rect.height)).fill()
       NSBezierPath(rect: NSRect(x: rect.minX + 6, y: rect.minY, width: 2.5, height: rect.height)).fill()
-    case "succeeded":
-      NSColor.systemGreen.setStroke()
-      let path = NSBezierPath()
-      path.lineWidth = 2
-      path.move(to: NSPoint(x: rect.minX + 1, y: rect.midY))
-      path.line(to: NSPoint(x: rect.minX + 4, y: rect.minY + 1))
-      path.line(to: NSPoint(x: rect.maxX - 1, y: rect.maxY - 1))
-      path.stroke()
-    case "failed":
-      NSColor.systemRed.setStroke()
-      let path = NSBezierPath()
-      path.lineWidth = 2
-      path.move(to: NSPoint(x: rect.minX + 1, y: rect.minY + 1))
-      path.line(to: NSPoint(x: rect.maxX - 1, y: rect.maxY - 1))
-      path.move(to: NSPoint(x: rect.minX + 1, y: rect.maxY - 1))
-      path.line(to: NSPoint(x: rect.maxX - 1, y: rect.minY + 1))
-      path.stroke()
+    case "stopped":
+      NSColor.systemRed.setFill()
+      NSBezierPath(roundedRect: NSRect(x: rect.minX + 1, y: rect.minY + 1, width: rect.width - 2, height: rect.height - 2), xRadius: 1, yRadius: 1).fill()
     default:
       NSColor.systemBlue.setFill()
       let path = NSBezierPath()
