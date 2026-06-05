@@ -2407,7 +2407,7 @@ class PeekabooVideo implements AsyncDisposable {
   }
 }
 
-const macAutomationServerSwiftSource = `
+export const macAutomationServerSwiftSource = `
 import AppKit
 import ApplicationServices
 import Carbon.HIToolbox

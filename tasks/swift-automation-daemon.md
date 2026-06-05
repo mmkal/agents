@@ -37,6 +37,7 @@ The API surface used by `examples/x.test.ts`, `examples/sqlfu.test.ts`, and `exa
 - [x] Keep Chrome DOM APIs functional. _Chrome DOM APIs still use Apple Events JavaScript semantics, but evaluation now goes through the daemon rather than launching `osascript` per call._
 - [x] Run `pnpm typecheck`. _Passed on 2026-06-05._
 - [x] Add regression coverage for the daemon-backed active helper surface. _`tests/peekaboo-computer-daemon.test.ts` asserts `examples/peekaboo-computer.ts` and examples importing it do not call the Peekaboo CLI._
+- [x] Add a non-UI Swift compile smoke. _`tests/peekaboo-computer-daemon.test.ts` imports the generated daemon Swift source and compiles it with `xcrun swiftc`, cached by source hash under `/tmp`._
 - [ ] Run at least `pnpm vitest x.test`.
 - [ ] Run or assess `examples/sqlfu.test.ts` coverage.
 
@@ -53,3 +54,4 @@ The API surface used by `examples/x.test.ts`, `examples/sqlfu.test.ts`, and `exa
 - 2026-06-05: Added a focused regression test for the daemon-backed examples so `x.test.ts`, `sqlfu.test.ts`, `tsc-cursor-compwright.test.ts`, and `peekaboo-computer.ts` do not regain direct Peekaboo CLI command calls.
 - 2026-06-05: Cached the compiled Swift daemon binary under `/tmp/macwright-swift-cache` by source hash, so repeated `PeekabooComputer.create()` calls skip recompilation until the daemon source changes.
 - 2026-06-05: Moved `computer.say(...)` into `/speech/say`; the daemon terminates the previous `say` process before starting the next one. Updated `sqlfu.test.ts` to use `computer.say(...)` instead of raw shell `say`.
+- 2026-06-05: Exported the generated daemon Swift source for tests and added a permanent compile-only smoke that does not start UI automation. This catches Swift syntax/API drift even when the desktop session is locked.

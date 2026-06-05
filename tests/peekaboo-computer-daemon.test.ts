@@ -1,5 +1,15 @@
+import { execFile } from 'node:child_process'
+import { createHash } from 'node:crypto'
 import * as fs from 'node:fs/promises'
+import { existsSync } from 'node:fs'
+import { tmpdir } from 'node:os'
+import { join } from 'node:path'
+import { promisify } from 'node:util'
 import { expect, test } from 'vitest'
+
+import { macAutomationServerSwiftSource } from '../examples/peekaboo-computer.ts'
+
+const execFileAsync = promisify(execFile)
 
 test('peekaboo computer helper-backed examples do not call the peekaboo CLI', async () => {
   const files = [
@@ -32,4 +42,40 @@ test('peekaboo computer helper-backed examples do not call the peekaboo CLI', as
       'examples/x.test.ts',
     ]),
   )
+})
+
+test.skipIf(process.platform !== 'darwin')('mac automation daemon Swift source compiles', async () => {
+  const hash = createHash('sha256')
+    .update(macAutomationServerSwiftSource)
+    .digest('hex')
+    .slice(0, 16)
+  const directory = join(tmpdir(), 'macwright-swift-compile-test')
+  const sourcePath = join(directory, `mac-automation-server-${hash}.swift`)
+  const binaryPath = join(directory, `mac-automation-server-${hash}`)
+
+  await fs.mkdir(directory, { recursive: true })
+  await fs.writeFile(sourcePath, macAutomationServerSwiftSource)
+
+  if (!existsSync(binaryPath)) {
+    const temporaryBinaryPath = join(
+      directory,
+      `mac-automation-server-${hash}-${process.pid}-${Date.now()}`,
+    )
+
+    await execFileAsync('xcrun', ['swiftc', sourcePath, '-o', temporaryBinaryPath], {
+      timeout: 60_000,
+    })
+
+    try {
+      await fs.rename(temporaryBinaryPath, binaryPath)
+    } catch (error) {
+      if ((error as any).code !== 'EEXIST' || !existsSync(binaryPath)) {
+        throw error
+      }
+
+      await fs.rm(temporaryBinaryPath, { force: true })
+    }
+  }
+
+  expect(existsSync(binaryPath)).toBe(true)
 })
