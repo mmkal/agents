@@ -36,6 +36,7 @@ The API surface used by `examples/x.test.ts`, `examples/sqlfu.test.ts`, and `exa
 - [x] Route OCR through daemon endpoints where possible. _Vision recognition moved into `/ocr/image`; the old per-call `vision-ocr.swift` script was removed._
 - [x] Keep Chrome DOM APIs functional. _Chrome DOM APIs still use Apple Events JavaScript semantics, but evaluation now goes through the daemon rather than launching `osascript` per call._
 - [x] Run `pnpm typecheck`. _Passed on 2026-06-05._
+- [x] Add regression coverage for the daemon-backed active helper surface. _`tests/peekaboo-computer-daemon.test.ts` asserts `examples/peekaboo-computer.ts` and examples importing it do not call the Peekaboo CLI._
 - [ ] Run at least `pnpm vitest x.test`.
 - [ ] Run or assess `examples/sqlfu.test.ts` coverage.
 
@@ -49,3 +50,4 @@ The API surface used by `examples/x.test.ts`, `examples/sqlfu.test.ts`, and `exa
 - 2026-06-05: Replaced direct `screencapture` screenshot endpoints with a ScreenCaptureKit-first path plus `screencapture` fallback. The fallback was needed in this session because `SCScreenshotManager.captureImage(in:)` returned no image while the foreground CG window was `loginwindow`.
 - 2026-06-05: Added an early startup error when the daemon sees `loginwindow` as foreground, and made `PeekabooComputer.create()` dispose the daemon/temp directory on startup failures.
 - 2026-06-05: Moved `allowJavaScriptFromAppleEvents('Google Chrome')` into the daemon. The daemon now probes Chrome JavaScript Apple Events, captures/restores tab URLs, quits Chrome, patches both preference locations, restarts Chrome, and verifies the setting.
+- 2026-06-05: Added a focused regression test for the daemon-backed examples so `x.test.ts`, `sqlfu.test.ts`, `tsc-cursor-compwright.test.ts`, and `peekaboo-computer.ts` do not regain direct Peekaboo CLI command calls.
