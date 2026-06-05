@@ -408,6 +408,7 @@ type PeekabooLocatorParent = PeekabooCommandParent & {
     trigger: Extract<AutozoomTrigger, 'click' | 'hover'>,
     bounds: ScreenBounds | WindowBounds,
   ): void
+  endAutozoomAtCurrentTime(): void
   recordAutozoomPoint(
     trigger: Extract<AutozoomTrigger, 'click' | 'hover'>,
     coords: ScreenCoordinates | WindowCoordinates,
@@ -526,6 +527,10 @@ class MacAutomationServer {
 
   async focusWindow(windowId: number) {
     await this.post('/window/focus', { windowId })
+  }
+
+  async isWindowFocused(windowId: number) {
+    return await this.post<{ focused: boolean }>('/window/is-focused', { windowId })
   }
 
   async closeWindow(windowId: number) {
@@ -1197,6 +1202,8 @@ export class Macwright
 
   recordAutozoomBounds() {}
 
+  endAutozoomAtCurrentTime() {}
+
   recordAutozoomPoint() {}
 
   async readFile(path: string) {
@@ -1439,9 +1446,6 @@ class PeekabooWindow implements AsyncDisposable, PeekabooOcrParent {
           if (options.linger) {
             await this.sleep(options.linger)
           }
-          if (this.app === 'Cursor' && (keys.startsWith('cmd,') || keys.startsWith('cmd+'))) {
-            await this.press('escape')
-          }
         },
       )
     }
@@ -1633,6 +1637,12 @@ class PeekabooWindow implements AsyncDisposable, PeekabooOcrParent {
   }
 
   async focus() {
+    const current = await this.parent.automation.isWindowFocused(this.windowId)
+
+    if (current.focused) {
+      return
+    }
+
     try {
       await this.parent.automation.focusWindow(this.windowId)
       return
@@ -1868,6 +1878,14 @@ class PeekabooWindow implements AsyncDisposable, PeekabooOcrParent {
       trigger,
       expandWindowBounds(windowTextBounds, 72, this.windowBounds),
     )
+  }
+
+  endAutozoomAtCurrentTime() {
+    const end = this.video?.timestamp()
+
+    if (end !== undefined) {
+      this.video?.endAutozoomAt(end)
+    }
   }
 
   private async recordTypedAutozoom(
@@ -2602,6 +2620,8 @@ final class AutomationServer {
     case "/window/focus":
       try focusWindow(id: requiredInt(body, "windowId"))
       return ["ok": true]
+    case "/window/is-focused":
+      return ["focused": windowIsFocused(id: requiredInt(body, "windowId"))]
     case "/window/close":
       try closeWindow(id: requiredInt(body, "windowId"))
       return ["ok": true]
@@ -2764,6 +2784,38 @@ final class AutomationServer {
     }
   }
 
+  private func windowIsFocused(id: Int) -> Bool {
+    guard let app = runningAppForWindow(id: id) else {
+      return false
+    }
+
+    if NSWorkspace.shared.frontmostApplication?.processIdentifier != app.processIdentifier {
+      return false
+    }
+
+    let appElement = AXUIElementCreateApplication(app.processIdentifier)
+    var focusedValue: CFTypeRef?
+
+    guard AXUIElementCopyAttributeValue(
+      appElement,
+      kAXFocusedWindowAttribute as CFString,
+      &focusedValue
+    ) == .success,
+      focusedValue != nil else {
+      return false
+    }
+    let focusedWindow = focusedValue as! AXUIElement
+
+    if windowNumber(focusedWindow) == id {
+      return true
+    }
+
+    let focusedTitle = axString(focusedWindow, kAXTitleAttribute as CFString)
+    let expectedTitle = windowTitleForWindow(id: id)
+
+    return focusedTitle != nil && focusedTitle == expectedTitle
+  }
+
   private func closeWindow(id: Int) throws {
     guard let window = axWindow(id: id) else {
       throw ServerError("window not found: \\(id)")
@@ -2902,7 +2954,10 @@ final class AutomationServer {
         until: untilText
       )
 
-      for searchText in Set([targetText, untilText, afterText, beforeText]) {
+      for searchText in Set(
+        [targetText, untilText, afterText, beforeText]
+          .flatMap { ocrSearchTexts($0) }
+      ) {
         appendTextMatches(
           to: &textPositions,
           text: searchText,
@@ -2920,6 +2975,24 @@ final class AutomationServer {
       "recognizedText": recognizedText,
       "textPositions": textPositions,
     ]
+  }
+
+  private func ocrSearchTexts(_ text: String) -> [String] {
+    let trimmed = text.trimmingCharacters(in: .whitespacesAndNewlines)
+
+    if trimmed.isEmpty {
+      return []
+    }
+
+    let parts = trimmed
+      .split(whereSeparator: { $0.isWhitespace })
+      .map(String.init)
+
+    if parts.count <= 1 {
+      return [trimmed]
+    }
+
+    return [trimmed] + parts
   }
 
   private func appendTextMatches(
@@ -3028,14 +3101,25 @@ final class AutomationServer {
   ) -> String.Index? {
     var lineIndex = start
     var searchIndex = searchText.startIndex
+    var mismatches = 0
+    let allowedMismatches = ocrAllowedMismatchCount(searchText)
 
     while searchIndex < searchText.endIndex {
       if lineIndex >= searchEnd {
         return nil
       }
 
-      if !ocrCharactersEqual(lineText[lineIndex], searchText[searchIndex]) {
+      if ocrCharacterIsWhitespace(searchText[searchIndex])
+        && !ocrCharacterIsWhitespace(lineText[lineIndex]) {
         return nil
+      }
+
+      if !ocrCharactersEqual(lineText[lineIndex], searchText[searchIndex]) {
+        mismatches += 1
+
+        if mismatches > allowedMismatches {
+          return nil
+        }
       }
 
       lineIndex = lineText.index(after: lineIndex)
@@ -3043,6 +3127,14 @@ final class AutomationServer {
     }
 
     return lineIndex
+  }
+
+  private func ocrAllowedMismatchCount(_ text: String) -> Int {
+    if text.count < 5 {
+      return 0
+    }
+
+    return min(2, max(1, text.count / 4))
   }
 
   private func ocrCharactersEqual(_ left: Character, _ right: Character) -> Bool {
@@ -3058,6 +3150,10 @@ final class AutomationServer {
     }
 
     return ocrDotLikeCharacter(leftText) && ocrDotLikeCharacter(rightText)
+  }
+
+  private func ocrCharacterIsWhitespace(_ character: Character) -> Bool {
+    return String(character).rangeOfCharacter(from: .whitespacesAndNewlines) != nil
   }
 
   private func ocrCanonicalCharacter(_ text: String) -> String {
@@ -3385,20 +3481,41 @@ final class AutomationServer {
       .filter { !$0.isEmpty }
     var flags = CGEventFlags()
     var keyName = parts.last ?? keys.lowercased()
+    var modifiers: [(code: CGKeyCode, flag: CGEventFlags)] = []
 
     for part in parts.dropLast() {
       switch part {
-      case "cmd", "command": flags.insert(.maskCommand)
-      case "ctrl", "control": flags.insert(.maskControl)
-      case "shift": flags.insert(.maskShift)
-      case "option", "alt": flags.insert(.maskAlternate)
+      case "cmd", "command":
+        flags.insert(.maskCommand)
+        modifiers.append((code: 55, flag: .maskCommand))
+      case "ctrl", "control":
+        flags.insert(.maskControl)
+        modifiers.append((code: 59, flag: .maskControl))
+      case "shift":
+        flags.insert(.maskShift)
+        modifiers.append((code: 56, flag: .maskShift))
+      case "option", "alt":
+        flags.insert(.maskAlternate)
+        modifiers.append((code: 58, flag: .maskAlternate))
       default: keyName = part
       }
     }
 
     guard let code = keyCode(keyName) else { return }
+    var activeFlags = CGEventFlags()
+
+    for modifier in modifiers {
+      activeFlags.insert(modifier.flag)
+      postKey(code: modifier.code, flags: activeFlags, down: true)
+    }
+
     postKey(code: code, flags: flags, down: true)
     postKey(code: code, flags: flags, down: false)
+
+    for modifier in modifiers.reversed() {
+      activeFlags.remove(modifier.flag)
+      postKey(code: modifier.code, flags: activeFlags, down: false)
+    }
   }
 
   private func typeText(_ text: String, delayMs: Int) {
@@ -3406,6 +3523,9 @@ final class AutomationServer {
     for scalar in text.unicodeScalars {
       if scalar.value == 10 {
         hotkey("return")
+      } else if let stroke = keyStroke(String(scalar)) {
+        postKey(code: stroke.code, flags: stroke.flags, down: true)
+        postKey(code: stroke.code, flags: stroke.flags, down: false)
       } else {
         var value = UniChar(scalar.value)
         if let down = CGEvent(keyboardEventSource: source, virtualKey: 0, keyDown: true),
@@ -3420,6 +3540,47 @@ final class AutomationServer {
         usleep(useconds_t(delayMs * 1000))
       }
     }
+  }
+
+  private func keyStroke(_ character: String) -> (code: CGKeyCode, flags: CGEventFlags)? {
+    if let code = keyCode(character.lowercased()), character.rangeOfCharacter(from: CharacterSet.uppercaseLetters) == nil {
+      return (code: code, flags: [])
+    }
+
+    if character.rangeOfCharacter(from: CharacterSet.uppercaseLetters) != nil,
+       let code = keyCode(character.lowercased()) {
+      return (code: code, flags: .maskShift)
+    }
+
+    let shifted: [String: String] = [
+      "!": "1",
+      "@": "2",
+      "#": "3",
+      "$": "4",
+      "%": "5",
+      "^": "6",
+      "&": "7",
+      "*": "8",
+      "(": "9",
+      ")": "0",
+      "_": "-",
+      "+": "=",
+      "{": "[",
+      "}": "]",
+      "|": "\\\\",
+      ":": ";",
+      "\\"": "'",
+      "<": ",",
+      ">": ".",
+      "?": "/",
+      "~": "\\u{60}",
+    ]
+
+    if let base = shifted[character], let code = keyCode(base) {
+      return (code: code, flags: .maskShift)
+    }
+
+    return nil
   }
 
   private func say(_ message: String) {
@@ -3971,6 +4132,7 @@ class PeekabooSeeLocator {
         })
         this.recordAutozoom('hover', element)
         await this.parent.sleep(linger)
+        this.parent.endAutozoomAtCurrentTime()
       },
     )
   }
@@ -4330,6 +4492,7 @@ class PeekabooDomLocator<TElement extends HTMLElement = HTMLElement> {
         await this.parent.automation.move({ ...coords, duration: 150, steps: 5 })
         this.parent.recordAutozoomBounds('hover', bounds)
         await this.parent.sleep(linger)
+        this.parent.endAutozoomAtCurrentTime()
       },
     )
   }
@@ -4713,6 +4876,7 @@ class PeekabooOcrLocator {
         await this.parent.automation.move({ ...coords, duration: 150, steps: 5 })
         this.parent.recordAutozoomPoint('hover', coords)
         await this.parent.sleep(linger)
+        this.parent.endAutozoomAtCurrentTime()
         return this
       },
     )
@@ -4841,6 +5005,8 @@ class PeekabooOcrLocator {
       let lastError: unknown
 
       while (Date.now() < deadline) {
+        await this.parent.assertUserActionStill('during ocr.waitFor')
+        await this.parent.sleep(250)
         await this.parent.assertUserActionStill('during ocr.waitFor')
 
         try {
@@ -5164,10 +5330,14 @@ async function findOcrMatchInCapturedImage(options: {
   const textPositions = Array.isArray(payload.textPositions)
     ? payload.textPositions
     : []
+  const payloadMatches = Array.isArray(payload.matches) ? payload.matches : []
+  const rawMatches = payloadMatches.length > 0
+    ? payloadMatches
+    : ocrMultipartMatches(textPositions, options.options.text)
   let matches = filterOcrMatches({
     after: options.options.after,
     before: options.options.before,
-    matches: Array.isArray(payload.matches) ? payload.matches : [],
+    matches: rawMatches,
     textPositions,
   })
   matches = extendOcrMatchesUntil({
@@ -6253,6 +6423,63 @@ function ocrTextOccurrences(
   return occurrences.filter(
     (occurrence) => occurrence.text.toLowerCase() === needle,
   )
+}
+
+function ocrMultipartMatches(
+  occurrences: OcrTextOccurrence[],
+  text: string,
+): OcrTextOccurrence[] {
+  const parts = ocrSearchParts(text)
+
+  if (parts.length <= 1 || !/[^\w\s]/.test(text)) {
+    return []
+  }
+
+  const matches: OcrTextOccurrence[] = []
+  const firstPartOccurrences = ocrTextOccurrences(occurrences, parts[0])
+
+  for (const first of firstPartOccurrences) {
+    const sequence = [first]
+    let cursor = first
+
+    for (const part of parts.slice(1)) {
+      const next = ocrTextOccurrences(occurrences, part)
+        .filter((candidate) => compareOcrVisualTextPositions(candidate, cursor) > 0)
+        .sort(compareOcrVisualTextPositions)[0]
+
+      if (!next) {
+        break
+      }
+
+      sequence.push(next)
+      cursor = next
+    }
+
+    if (sequence.length !== parts.length) {
+      continue
+    }
+
+    const boundingBox = sequence
+      .slice(1)
+      .reduce(
+        (box, occurrence) => unionVisionBoxes(box, occurrence.boundingBox),
+        sequence[0].boundingBox,
+      )
+
+    matches.push({
+      ...first,
+      boundingBox,
+      confidence: Math.min(...sequence.map((occurrence) => occurrence.confidence)),
+      lineText: sequence.map((occurrence) => occurrence.lineText).join(' '),
+      text,
+    })
+  }
+
+  return matches
+}
+
+function ocrSearchParts(text: string) {
+  return text.trim().split(/\s+/).filter(Boolean)
 }
 
 function compareOcrVisualTextPositions(

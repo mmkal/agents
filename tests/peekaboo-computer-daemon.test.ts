@@ -102,6 +102,35 @@ test('type autozoom can end before the final frame', () => {
   ])
 })
 
+test('hover autozoom ends at the recorded break', () => {
+  const spans = peekabooComputerVideoTestInternals.normalizeVideoZoomEvents(
+    [
+      {
+        height: 170,
+        width: 360,
+        x: 556,
+        y: 176,
+        start: 1_500,
+        trigger: 'hover',
+      },
+    ],
+    [2_500],
+    20_000,
+  )
+
+  expect(spans).toEqual([
+    {
+      height: 170,
+      width: 360,
+      x: 556,
+      y: 176,
+      start: 1_500,
+      end: 2_500,
+      trigger: 'hover',
+    },
+  ])
+})
+
 test('type autozoom is projected onto the tightened video timeline', () => {
   const segments = peekabooComputerVideoTestInternals.tightVideoSegments({
     deadAir: [{ start: 4_000, end: 10_000 }],

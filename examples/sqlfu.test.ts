@@ -69,17 +69,16 @@ test('sqlfu demo', async () => {
   })
 
   await using video = await ide.startVideo()
-  video.autozoom(['type', 'click', 'hover'])
+  video.autozoom(['type'])
   video.addSoundtrack(process.cwd() + "/assets.ignoreme/dream-baby-dream.mp3")
 
   await computer.step('generate query types', async () => {
     await ide.ocr('listPosts: sql').highlight();
-    await ide.sleep(600);
-
+    
     await ide.hotkey('ctrl,`')
-    await ide.sleep(150)
-    await ide.type('sqlfu --config posts-object.ts generate --watch')
-    await ide.press('return', { noAutoFocus: true })
+    await ide.sleep(600)
+
+    await ide.type('sqlfu --config posts-object.ts generate --watch\n')
 
     await computer.waitForFile('posts-object.ts', {
       contains: /listPosts: sql.many<{.+}>/,
@@ -129,13 +128,14 @@ test('sqlfu demo', async () => {
 
     await ide.hotkey('ctrl,`')
     await ide.hotkey('ctrl,c')
+    await ide.sleep(150)
 
     await ide.type(`sqlfu --config posts-object.ts draft\n`)
     
     await ide.sleep(500)
     await ide.press('return')
     
-    await ide.ocr('name:').highlight({linger: 500})
+    await ide.ocr('name:', { until: ',' }).highlight({linger: 500})
     await ide.hotkey('cmd+option+[') // collapse the migration block
   })
   
@@ -153,7 +153,8 @@ test('sqlfu demo', async () => {
     await ide.ocr('alter table', {until: 'published_at text', before: 'Terminal'}).highlight({ linger: 1000 })
   })
 
-  await video.save()
+  const path = await video.save()
+  console.log('video saved to', path + '/tight.mp4')
 }, 240_000)
 
 const postsObjectSource = dedent`
