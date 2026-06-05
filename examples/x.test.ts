@@ -25,18 +25,14 @@ test('draft an X post', async () => {
     `Introducing macwright: a playwright-style wrapper for your whole computer. Automate the browser, finder, any terminal, your IDE - anything at all.`
   )
   
-  const attachVideo = async () => {
-    await dom.getByLabel('Add photos or video').click()
-    await computer.ocr('post.mp4').dblclick().catch(async () => {
-      await x.hotkey('cmd,shift,g')
-      await x.hotkey('cmd,a')
-      await x.type(dirname(videoPath))
-      await x.press('return')
-      await computer.ocr('post.mp4').dblclick()
-    })
-  }
-
-  await attachVideo()
+  await dom.getByLabel('Add photos or video').click()
+  await computer.ocr('post.mp4').dblclick().catch(async () => {
+    await x.hotkey('cmd,shift,g')
+    await x.hotkey('cmd,a')
+    await x.type(dirname(videoPath))
+    await x.press('return')
+    await computer.ocr('post.mp4').dblclick()
+  })
 
   await video.fastForward({ maxDuration: '2s' }, async () => {
     await dom.locator('[role="status"]', { hasText: 'Uploaded (100%)' }).waitFor({timeout: 10_000})
