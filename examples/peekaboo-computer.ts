@@ -243,6 +243,26 @@ type PeekabooVideoSaveAssets = {
   tightPath: string
 }
 
+type AutomationImageCapture = {
+  bounds: ScreenBounds
+}
+
+type AutomationWindowInfo = {
+  bounds: PeekabooBounds
+  window_id: number
+  window_title: string
+}
+
+type AutomationOcrPayload = {
+  image: {
+    height: number
+    width: number
+  }
+  matches: OcrTextOccurrence[]
+  recognizedText: string[]
+  textPositions: OcrTextOccurrence[]
+}
+
 type AutozoomCamera = {
   height: number
   width: number
@@ -341,6 +361,7 @@ type PeekabooSeeResult = {
 }
 
 type PeekabooCommandParent = {
+  automation: MacAutomationServer
   exec: ComputerExec
   acceptCurrentUserActionState(): Promise<void>
   assertUserActionStill(location: string): Promise<void>
@@ -350,8 +371,9 @@ type PeekabooCommandParent = {
     options: GuardedActionOptions,
     action: () => Promise<T>,
   ): Promise<T>
+  readUserActionState(): Promise<UserActionState>
+  restoreUserActionState(state: UserActionState): Promise<void>
   sleep(ms: number): Promise<void>
-  targetFlags(): string
 }
 
 type PeekabooLocatorParent = PeekabooCommandParent & {
@@ -364,6 +386,7 @@ type PeekabooLocatorParent = PeekabooCommandParent & {
     trigger: Extract<AutozoomTrigger, 'click' | 'hover'>,
     coords: ScreenCoordinates | WindowCoordinates,
   ): void
+  toScreenCoordinates(coords: ScreenCoordinates | WindowCoordinates): ScreenCoordinates
 }
 
 type PeekabooOcrParent = PeekabooLocatorParent & {
@@ -397,12 +420,283 @@ type PeekabooDomParent = PeekabooLocatorParent & {
 }
 
 type PeekabooUserActionGuardParent = {
-  exec: ComputerExec
   deadAir<T>(action: () => Promise<T>): Promise<T>
+  readUserActionState(): Promise<UserActionState>
+  restoreUserActionState(state: UserActionState): Promise<void>
 }
 
 type PeekabooWindowParent = PeekabooCommandParent & {
   useActiveVideo(video: PeekabooVideo): () => void
+}
+
+class MacAutomationServer {
+  private assetsDirectory: string
+  private child?: ReturnType<typeof spawn>
+  private exec: ComputerExec
+  private port?: number
+
+  constructor(options: {
+    assetsDirectory: string
+    exec: ComputerExec
+  }) {
+    this.assetsDirectory = options.assetsDirectory
+    this.exec = options.exec
+  }
+
+  async start() {
+    await fs.mkdir(this.assetsDirectory, { recursive: true })
+    const sourcePath = join(this.assetsDirectory, 'mac-automation-server.swift')
+    const binaryPath = join(this.assetsDirectory, 'mac-automation-server')
+    await fs.writeFile(sourcePath, macAutomationServerSwiftSource)
+    await this.exec({ timeout: 60_000 })`xcrun swiftc ${sourcePath} -o ${binaryPath}`
+
+    const child = spawn(binaryPath, [], {
+      stdio: ['ignore', 'pipe', 'pipe'],
+    })
+    this.child = child
+    this.port = await this.waitForPort(child)
+  }
+
+  async stop() {
+    const child = this.child
+
+    if (!child) {
+      return
+    }
+
+    this.child = undefined
+
+    await this.post('/shutdown', {}).catch(() => {})
+
+    if (child.exitCode !== null) {
+      return
+    }
+
+    const exited = new Promise<void>((resolve) => {
+      child.once('exit', () => resolve())
+    })
+    const timeout = new Promise<void>((resolve) => {
+      setTimeout(() => {
+        if (child.exitCode === null) {
+          child.kill('SIGTERM')
+        }
+        resolve()
+      }, 1_000)
+    })
+
+    await Promise.race([exited, timeout])
+  }
+
+  async permissions() {
+    return await this.post<{
+      permissions: Array<{ isGranted: boolean; name: string }>
+    }>('/permissions', {})
+  }
+
+  async open(options: {
+    app: string
+    target: string
+  }) {
+    await this.post('/open', options)
+  }
+
+  async windows(app: string) {
+    return await this.post<{ windows: AutomationWindowInfo[] }>('/windows', { app })
+  }
+
+  async focusWindow(windowId: number) {
+    await this.post('/window/focus', { windowId })
+  }
+
+  async closeWindow(windowId: number) {
+    await this.post('/window/close', { windowId })
+  }
+
+  async captureScreen(path: string) {
+    return await this.post<AutomationImageCapture>('/image/screen', { path })
+  }
+
+  async captureArea(region: ScreenBounds, path: string) {
+    return await this.post<AutomationImageCapture>('/image/area', {
+      height: region.height,
+      path,
+      width: region.width,
+      x: region.x,
+      y: region.y,
+    })
+  }
+
+  async captureWindow(windowId: number, path: string) {
+    return await this.post<AutomationImageCapture>('/image/window', { path, windowId })
+  }
+
+  async ocrImage(options: {
+    after: string
+    before: string
+    imagePath: string
+    text: string
+    until: string
+  }) {
+    return await this.post<AutomationOcrPayload>('/ocr/image', options)
+  }
+
+  async evaluateChromeJavaScript(source: string) {
+    return await this.post<{ result: string }>('/chrome/evaluate', { source })
+  }
+
+  async click(options: {
+    double?: boolean
+    x: number
+    y: number
+  }) {
+    await this.post('/mouse/click', options)
+  }
+
+  async move(options: {
+    duration?: number
+    steps?: number
+    x: number
+    y: number
+  }) {
+    await this.post('/mouse/move', options)
+  }
+
+  async drag(options: {
+    duration?: number
+    fromX: number
+    fromY: number
+    steps?: number
+    toX: number
+    toY: number
+  }) {
+    await this.post('/mouse/drag', options)
+  }
+
+  async scroll(options: {
+    delay: number
+    direction: 'down' | 'up'
+    jump: boolean
+    pixels: number
+  }) {
+    await this.post('/mouse/scroll', options)
+  }
+
+  async hotkey(keys: string) {
+    await this.post('/keyboard/hotkey', { keys })
+  }
+
+  async press(keys: string) {
+    await this.post('/keyboard/press', { keys })
+  }
+
+  async type(text: string, options: { delay: number }) {
+    await this.post('/keyboard/type', { delay: options.delay, text })
+  }
+
+  async clipboardGet() {
+    const result = await this.post<{ text: string }>('/clipboard/get', {})
+    return result.text
+  }
+
+  async clipboardSet(text: string) {
+    await this.post('/clipboard/set', { text })
+  }
+
+  async clipboardSave(slot: string) {
+    await this.post('/clipboard/save', { slot })
+  }
+
+  async clipboardRestore(slot: string) {
+    await this.post('/clipboard/restore', { slot })
+  }
+
+  async userActionState(): Promise<UserActionState> {
+    return await this.post<UserActionState>('/user-action-state', {})
+  }
+
+  async restoreUserActionState(state: UserActionState) {
+    await this.post('/restore-user-action-state', state)
+  }
+
+  private async post<T>(path: string, body: unknown): Promise<T> {
+    if (!this.port) {
+      throw new Error('Mac automation server has not started')
+    }
+
+    const requestBody = JSON.stringify(body)
+    const response = await fetch(`http://127.0.0.1:${this.port}${path}`, {
+      body: requestBody,
+      headers: {
+        'Content-Length': String(Buffer.byteLength(requestBody)),
+        'Content-Type': 'application/json',
+      },
+      method: 'POST',
+    })
+    const text = await response.text()
+    const payload = text ? JSON.parse(text) : {}
+
+    if (!response.ok) {
+      throw new Error(
+        payload && payload.error
+          ? String(payload.error)
+          : `Mac automation server request failed: ${path} ${response.status}`,
+      )
+    }
+
+    return payload as T
+  }
+
+  private async waitForPort(child: ReturnType<typeof spawn>) {
+    let stdout = ''
+    let stderr = ''
+
+    return await new Promise<number>((resolve, reject) => {
+      const stdoutPipe = child.stdout
+      const stderrPipe = child.stderr
+
+      if (!stdoutPipe || !stderrPipe) {
+        reject(new Error('Mac automation server stdout/stderr pipes were not available'))
+        return
+      }
+
+      const timer = setTimeout(() => {
+        cleanup()
+        reject(new Error(`Timed out waiting for mac automation server port. stderr:\n${stderr}`))
+      }, 10_000)
+      const cleanup = () => {
+        clearTimeout(timer)
+        stdoutPipe.off('data', onStdout)
+        stderrPipe.off('data', onStderr)
+        child.off('exit', onExit)
+        child.off('error', onError)
+      }
+      const onStdout = (chunk: Buffer) => {
+        stdout += String(chunk)
+        const match = stdout.match(/PORT (\d+)/)
+
+        if (match) {
+          cleanup()
+          resolve(Number(match[1]))
+        }
+      }
+      const onStderr = (chunk: Buffer) => {
+        stderr += String(chunk)
+      }
+      const onExit = (code: number | null) => {
+        cleanup()
+        reject(new Error(`Mac automation server exited before startup with code ${code}. stderr:\n${stderr}`))
+      }
+      const onError = (error: Error) => {
+        cleanup()
+        reject(error)
+      }
+
+      stdoutPipe.on('data', onStdout)
+      stderrPipe.on('data', onStderr)
+      child.once('exit', onExit)
+      child.once('error', onError)
+    })
+  }
 }
 
 export class PeekabooComputer
@@ -410,6 +704,7 @@ export class PeekabooComputer
   implements AsyncDisposable, PeekabooOcrParent
 {
   assetsDirectory: string
+  automation: MacAutomationServer
   directory: string
   exec: ComputerExec
   parentDirectory: string
@@ -431,11 +726,12 @@ export class PeekabooComputer
     })
     await fs.mkdir(computer.directory, { recursive: true })
     await fs.mkdir(computer.assetsDirectory, { recursive: true })
+    await computer.automation.start()
 
     const {data} = await computer.permissions()
-    if (!data.permissions.some((p: any) => p.name === 'Accessibility' && p.isGranted)) {
-      const grantInstrctions = await computer.exec`peekaboo permissions grant`
-      throw new Error(`Accessibility permission is not granted. Instructions:\n${grantInstrctions.stdout}`)
+    const missingPermission = data.permissions.find((p: any) => !p.isGranted)
+    if (missingPermission) {
+      throw new Error(`${missingPermission.name} permission is not granted. Enable it for the current terminal/editor in System Settings > Privacy & Security.`)
     }
     return computer
   }
@@ -454,10 +750,15 @@ export class PeekabooComputer
         ? this.directory
         : process.cwd(),
     )
+    this.automation = new MacAutomationServer({
+      assetsDirectory: this.assetsDirectory,
+      exec: this.exec,
+    })
     this.userActionGuard = new PeekabooUserActionGuard(this, { tolerancePixels: 8 })
   }
 
   async [Symbol.asyncDispose]() {
+    await this.automation.stop()
     await fs.rm(this.directory, { force: true, recursive: true })
   }
 
@@ -521,6 +822,14 @@ export class PeekabooComputer
     await this.userActionGuard.assertStill(location)
   }
 
+  async readUserActionState() {
+    return await this.automation.userActionState()
+  }
+
+  async restoreUserActionState(state: UserActionState) {
+    await this.automation.restoreUserActionState(state)
+  }
+
   async acceptCurrentUserActionState() {
     await this.userActionGuard.acceptCurrentState()
   }
@@ -538,23 +847,22 @@ export class PeekabooComputer
   ) {
     return await this.guardedAction('open', { updatesUserActionState: true }, async () => {
       const windowTitle = basename(this.directory)
-      const waitFlag = options.waitUntilReady ? '--wait-until-ready' : ''
       const resolvedTarget = this.resolvePath(target)
       const previousWindowIds =
         resolvedTarget === this.directory
           ? new Set(
-              (await listPeekabooWindows(this, options.app))
+              (await listAutomationWindows(this, options.app))
                 .filter((window) => window.window_title.includes(windowTitle))
                 .map((window) => window.window_id),
             )
           : new Set<number>()
 
       if (resolvedTarget === this.directory) {
-        await closePeekabooWindows(this, options.app, windowTitle)
+        await closeAutomationWindows(this, options.app, windowTitle)
       }
 
-      await this.exec({ timeout: 60_000 })`peekaboo open ${resolvedTarget} --app ${options.app} ${raw(waitFlag)}`
-      const peekabooWindow = await waitForPeekabooWindow(
+      await this.automation.open({ app: options.app, target: resolvedTarget })
+      const automationWindow = await waitForAutomationWindow(
         this,
         options.app,
         windowTitle,
@@ -568,8 +876,8 @@ export class PeekabooComputer
         closeOnDispose: true,
         directory: this.directory,
         parent: this,
-        windowBounds: peekabooWindow.bounds,
-        windowId: peekabooWindow.window_id,
+        windowBounds: automationWindow.bounds,
+        windowId: automationWindow.window_id,
       })
     })
   }
@@ -585,12 +893,11 @@ export class PeekabooComputer
   ) {
     return await this.guardedAction('open external', { updatesUserActionState: true }, async () => {
       const previousWindowIds = new Set(
-        (await listPeekabooWindows(this, options.app)).map((window) => window.window_id),
+        (await listAutomationWindows(this, options.app)).map((window) => window.window_id),
       )
-      const waitFlag = options.waitUntilReady ? '--wait-until-ready' : ''
 
-      await this.exec({ timeout: 60_000 })`peekaboo open ${target} --app ${options.app} ${raw(waitFlag)}`
-      const peekabooWindow = await waitForExternalPeekabooWindow(
+      await this.automation.open({ app: options.app, target })
+      const automationWindow = await waitForExternalAutomationWindow(
         this,
         options.app,
         {
@@ -606,8 +913,8 @@ export class PeekabooComputer
         closeOnDispose: options.closeOnDispose,
         directory: this.directory,
         parent: this,
-        windowBounds: peekabooWindow.bounds,
-        windowId: peekabooWindow.window_id,
+        windowBounds: automationWindow.bounds,
+        windowId: automationWindow.window_id,
       })
     })
   }
@@ -617,8 +924,11 @@ export class PeekabooComputer
       'permissions',
       { updatesUserActionState: false },
       async () => {
-        const result = await this.exec`peekaboo permissions --json`
-        return JSON.parse(result.stdout)
+        const result = await this.automation.permissions()
+        return {
+          data: result,
+          permissions: result.permissions.find((permission) => permission.name === 'Accessibility'),
+        }
       },
     )
   }
@@ -701,8 +1011,7 @@ export class PeekabooComputer
       this.assetsDirectory,
       `screen-${this.screenCaptureIndex}-${Date.now()}.png`,
     )
-    const result = await this.exec`peekaboo image --mode screen --path ${imagePath} --format png --json`
-    this.screenBounds = peekabooImageLogicalBounds(result.stdout)
+    this.screenBounds = (await this.automation.captureScreen(imagePath)).bounds
 
     return this.screenBounds
   }
@@ -726,11 +1035,10 @@ export class PeekabooComputer
     const imagePath = await this.captureScreenRegionImage(region)
 
     return await findOcrMatchInCapturedImage({
+      automation: this.automation,
       captureBounds: region,
-      exec: this.exec,
       imagePath,
       options,
-      scriptPath: await writeVisionOcrScript(this.assetsDirectory),
     })
   }
 
@@ -742,6 +1050,14 @@ export class PeekabooComputer
   }
 
   async focus() {}
+
+  toScreenCoordinates(coords: ScreenCoordinates | WindowCoordinates): ScreenCoordinates {
+    return {
+      relativeTo: 'screen',
+      x: coords.x,
+      y: coords.y,
+    }
+  }
 
   async deadAir<T>(action: () => Promise<T>) {
     if (!this.activeVideo) {
@@ -762,11 +1078,11 @@ export class PeekabooComputer
   }
 
   async press(keys: string) {
-    await this.exec`peekaboo press ${keys} --no-auto-focus`
+    await this.automation.press(keys)
   }
 
   async type(text: string, options: TypeOptions = {}) {
-    await this.exec`peekaboo type --text ${text} --profile ${raw(options.profile || 'linear')} --delay ${raw(String(options.delay || 10))} --no-auto-focus`
+    await this.automation.type(text, { delay: options.delay || 10 })
   }
 
   recordAutozoomBounds() {}
@@ -820,10 +1136,6 @@ export class PeekabooComputer
 
   async sleep(ms: number) {
     await sleep(ms)
-  }
-
-  targetFlags() {
-    return ''
   }
 
   private async captureChromeSession(app: 'Google Chrome'): Promise<string[][]> {
@@ -920,14 +1232,7 @@ export class PeekabooComputer
       this.assetsDirectory,
       `screen-region-${this.screenCaptureIndex}-${Date.now()}.png`,
     )
-    const captureRegion = [
-      Math.round(region.x),
-      Math.round(region.y),
-      Math.round(region.width),
-      Math.round(region.height),
-    ].join(',')
-
-    await this.exec`peekaboo image --mode area --region ${captureRegion} --path ${imagePath} --format png --json`
+    await this.automation.captureArea(region, imagePath)
 
     return imagePath
   }
@@ -996,11 +1301,11 @@ class PeekabooMenuBarLocator {
   }
 
   private async clickAt(coords: ScreenCoordinates) {
-    await this.parent.exec`peekaboo click --coords ${coordsString(coords)} --global-coords --no-auto-focus`
+    await this.parent.automation.click(coords)
   }
 
   private async hoverAt(coords: ScreenCoordinates) {
-    await this.parent.exec`peekaboo move --coords ${coordsString(coords)} --duration 150 --steps 5 --profile linear --no-auto-focus`
+    await this.parent.automation.move({ ...coords, duration: 150, steps: 5 })
   }
 }
 
@@ -1043,15 +1348,17 @@ class PeekabooWindow implements AsyncDisposable, PeekabooOcrParent {
     return this.parent.exec
   }
 
+  get automation() {
+    return this.parent.automation
+  }
+
   async [Symbol.asyncDispose]() {
     if (!this.closeOnDispose) {
       return
     }
 
     // Never fall back to title matching here; cleanup must not close a user's real Cursor window.
-    await this.exec({ timeout: 15_000 })`peekaboo window close --window-id ${this.windowId}`.catch(
-      () => {},
-    )
+    await this.parent.automation.closeWindow(this.windowId).catch(() => {})
   }
 
   async click(target: ClickTarget) {
@@ -1060,8 +1367,9 @@ class PeekabooWindow implements AsyncDisposable, PeekabooOcrParent {
       { updatesUserActionState: true },
       async () => {
         await this.focus()
-        await this.exec`peekaboo click --coords ${target.coords} ${raw(this.targetFlags())} --no-auto-focus`
-        this.recordAutozoomPoint('click', windowCoordinatesFromCoordsString(target.coords))
+        const coords = this.toScreenCoordinates(windowCoordinatesFromCoordsString(target.coords))
+        await this.automation.click(coords)
+        this.recordAutozoomPoint('click', coords)
         await this.sleep(100)
       },
     )
@@ -1079,7 +1387,7 @@ class PeekabooWindow implements AsyncDisposable, PeekabooOcrParent {
 
   copySelection = async (): Promise<{ new: string; old: string }> => {
     const oldClipboard = await this.readClipboard().catch(() => '')
-    await this.exec`peekaboo clipboard save --slot ${this.clipboardSlot}`
+    await this.parent.automation.clipboardSave(this.clipboardSlot)
 
     try {
       await this.hotkey('cmd,c', { noAutoFocus: true })
@@ -1090,28 +1398,25 @@ class PeekabooWindow implements AsyncDisposable, PeekabooOcrParent {
         old: oldClipboard,
       }
     } finally {
-      await this.exec`peekaboo clipboard restore --slot ${this.clipboardSlot}`.catch(
-        () => {},
-      )
+      await this.parent.automation.clipboardRestore(this.clipboardSlot).catch(() => {})
     }
   }
 
   async hotkey(keyses: string | string[], options: { noAutoFocus?: boolean; linger?: number } = {}) {
-    const targetFlags = options.noAutoFocus ? '' : this.targetFlags()
-
     for (const keys of [keyses].flat()) {
       await this.guardedAction(
         `hotkey ${keys}`,
         { updatesUserActionState: false },
         async () => {
-          await this.exec`peekaboo hotkey ${keys} ${raw(targetFlags)} ${raw(
-            options.noAutoFocus ? '--no-auto-focus' : '',
-          )}`
+          if (!options.noAutoFocus) {
+            await this.focus()
+          }
+          await this.parent.automation.hotkey(keys)
           if (options.linger) {
             await this.sleep(options.linger)
           }
           if (this.app === 'Cursor' && (keys.startsWith('cmd,') || keys.startsWith('cmd+'))) {
-            await this.press('escape') // not sure if this is a peekaboo bug or me being dumb, but without this cmd stays "down" after the hotkey is pressed
+            await this.press('escape')
           }
         },
       )
@@ -1119,15 +1424,14 @@ class PeekabooWindow implements AsyncDisposable, PeekabooOcrParent {
   }
 
   async press(keys: string, options: PressOptions = {}) {
-    const targetFlags = options.noAutoFocus ? '' : this.targetFlags()
-
     await this.guardedAction(
       `press ${keys}`,
       { updatesUserActionState: false },
       async () => {
-        await this.exec`peekaboo press ${keys} ${raw(targetFlags)} ${raw(
-          options.noAutoFocus ? '--no-auto-focus' : '',
-        )}`
+        if (!options.noAutoFocus) {
+          await this.focus()
+        }
+        await this.parent.automation.press(keys)
         await this.sleep(100)
       },
     )
@@ -1147,16 +1451,18 @@ class PeekabooWindow implements AsyncDisposable, PeekabooOcrParent {
       `scroll ${direction}`,
       { updatesUserActionState: false },
       async () => {
-        const scriptPath = await this.focusedScrollScriptPath()
         const delay = options.delay === undefined ? 8 : options.delay
-        const delayMicroseconds = Math.round(delay * 1000)
-        const mode = options.jump ? 'jump' : 'smooth'
 
         if (!options.noAutoFocus) {
           await this.focus()
         }
 
-        await this.exec`swift ${scriptPath} ${direction} ${pixels} ${mode} ${delayMicroseconds}`
+        await this.parent.automation.scroll({
+          delay,
+          direction,
+          jump: Boolean(options.jump),
+          pixels,
+        })
         await this.sleep(100)
       },
     )
@@ -1238,14 +1544,8 @@ class PeekabooWindow implements AsyncDisposable, PeekabooOcrParent {
         '}',
         '})()',
       ].join(' ')
-      const appleScript = [
-        'tell application "Google Chrome"',
-        `set resultJson to execute active tab of front window javascript ${appleScriptString(browserSource)}`,
-        'end tell',
-        'return resultJson',
-      ]
-      const result = await this.exec`osascript ${raw(appleScript.map((line) => `-e ${shellQuote(line)}`).join(' '))}`
-      const payload = JSON.parse(result.stdout.trim())
+      const result = await this.parent.automation.evaluateChromeJavaScript(browserSource)
+      const payload = JSON.parse(result.result)
 
       if (!payload.ok) {
         throw new Error(
@@ -1281,34 +1581,14 @@ class PeekabooWindow implements AsyncDisposable, PeekabooOcrParent {
       `see-${this.seeCaptureIndex}-${Date.now()}.png`,
     )
     await fs.mkdir(this.assetsDirectory, { recursive: true })
-    const result = await this.exec({ timeout: 15_000 })`peekaboo see ${raw(this.targetFlags())} --json --path ${screenshotPath}`
-    const payload = JSON.parse(result.stdout)
-    const elements = Array.isArray(payload.data && payload.data.ui_elements)
-      ? payload.data.ui_elements
-      : []
-    const matches = elements.filter((element: PeekabooSeeElement) =>
-      seeElementMatches(element, query),
+    await this.parent.automation.captureWindow(this.windowId, screenshotPath)
+    throw new Error(
+      [
+        `Native see element lookup is not implemented yet: ${formatSeeQuery(query)}`,
+        `See screenshot: ${screenshotPath}`,
+        `Requested index: ${options.index || 0}`,
+      ].join('\n'),
     )
-    const index = options.index === undefined
-      ? 0
-      : options.index < 0
-        ? matches.length + options.index
-        : options.index
-    const element = matches[index]
-
-    if (!element) {
-      throw new Error(
-        [
-          `Peekaboo see element not found: ${formatSeeQuery(query)}`,
-          `See screenshot: ${screenshotPath}`,
-          `Matched elements: ${matches.length}`,
-          `Visible elements:`,
-          ...elements.slice(0, 80).map(describeSeeElement),
-        ].join('\n'),
-      )
-    }
-
-    return { element, screenshotPath }
   }
 
   async findOcrMatch(options: OcrMatchOptions): Promise<OcrMatchResult> {
@@ -1321,17 +1601,16 @@ class PeekabooWindow implements AsyncDisposable, PeekabooOcrParent {
     options: OcrMatchOptions,
   ): Promise<OcrMatchResult> {
     return await findOcrMatchInCapturedImage({
+      automation: this.parent.automation,
       captureBounds: this.windowBounds,
-      exec: this.exec,
       imagePath,
       options,
-      scriptPath: await this.visionOcrScriptPath(),
     })
   }
 
   async focus() {
     try {
-      await this.exec`peekaboo window focus ${raw(this.targetFlags())}`
+      await this.parent.automation.focusWindow(this.windowId)
       return
     } catch (error) {
       if (!this.app.toLowerCase().includes('chrome')) {
@@ -1339,7 +1618,7 @@ class PeekabooWindow implements AsyncDisposable, PeekabooOcrParent {
       }
     }
 
-    const peekabooWindow = await waitForExternalPeekabooWindow(
+    const automationWindow = await waitForExternalAutomationWindow(
       this.parent,
       this.app,
       {
@@ -1347,9 +1626,9 @@ class PeekabooWindow implements AsyncDisposable, PeekabooOcrParent {
         windowTitle: undefined,
       },
     )
-    this.windowBounds = peekabooWindow.bounds
-    this.windowId = peekabooWindow.window_id
-    await this.exec`peekaboo window focus ${raw(this.targetFlags())}`
+    this.windowBounds = automationWindow.bounds
+    this.windowId = automationWindow.window_id
+    await this.parent.automation.focusWindow(this.windowId)
   }
 
   async deadAir<T>(action: () => Promise<T>) {
@@ -1411,8 +1690,6 @@ class PeekabooWindow implements AsyncDisposable, PeekabooOcrParent {
       return
     }
 
-    const targetFlags = options.noAutoFocus ? '' : this.targetFlags()
-
     if (options.indent) {
       const indent = typeof options.indent === 'number' ? ' '.repeat(options.indent) : options.indent
       text = text.split('\n').map(line => indent + line).join('\n')
@@ -1424,9 +1701,10 @@ class PeekabooWindow implements AsyncDisposable, PeekabooOcrParent {
       'type',
       { updatesUserActionState: true },
       async () => {
-        await this.exec({ timeout: (text.length * options.delay) + 5000 })`peekaboo type --text ${text} ${raw(targetFlags)} --profile ${raw(options.profile)} --delay ${raw(String(options.delay))} ${raw(
-          options.noAutoFocus ? '--no-auto-focus' : '',
-        )}`
+        if (!options.noAutoFocus) {
+          await this.focus()
+        }
+        await this.parent.automation.type(text, { delay: options.delay })
       },
     )
 
@@ -1434,25 +1712,23 @@ class PeekabooWindow implements AsyncDisposable, PeekabooOcrParent {
   }
 
   async paste(text: string, options: { noAutoFocus?: boolean } = {}) {
-    const targetFlags = options.noAutoFocus ? '' : this.targetFlags()
     const startedAt = this.video?.timestamp()
 
     await this.guardedAction(
       'paste',
       { updatesUserActionState: false },
       async () => {
-        await this.exec`peekaboo clipboard save --slot ${this.clipboardSlot}`
+        await this.parent.automation.clipboardSave(this.clipboardSlot)
 
         try {
-          await this.exec`peekaboo clipboard set --text ${text}`
-          await this.exec`peekaboo hotkey cmd,v ${raw(targetFlags)} ${raw(
-            options.noAutoFocus ? '--no-auto-focus' : '',
-          )}`
+          if (!options.noAutoFocus) {
+            await this.focus()
+          }
+          await this.parent.automation.clipboardSet(text)
+          await this.parent.automation.hotkey('cmd,v')
           await this.sleep(100)
         } finally {
-          await this.exec`peekaboo clipboard restore --slot ${this.clipboardSlot}`.catch(
-            () => {},
-          )
+          await this.parent.automation.clipboardRestore(this.clipboardSlot).catch(() => {})
         }
       },
     )
@@ -1460,8 +1736,12 @@ class PeekabooWindow implements AsyncDisposable, PeekabooOcrParent {
     await this.recordTypedAutozoom(text, startedAt)
   }
 
-  targetFlags() {
-    return `--window-id ${this.windowId}`
+  toScreenCoordinates(coords: ScreenCoordinates | WindowCoordinates): ScreenCoordinates {
+    if (coords.relativeTo === 'screen') {
+      return coords
+    }
+
+    return screenCoordinatesForWindowCoordinates(coords, this.windowBounds)
   }
 
   async guardedAction<T>(
@@ -1497,6 +1777,14 @@ class PeekabooWindow implements AsyncDisposable, PeekabooOcrParent {
 
     await this.userActionGuard.assertStill(location)
     await this.parent.acceptCurrentUserActionState()
+  }
+
+  async readUserActionState() {
+    return await this.parent.readUserActionState()
+  }
+
+  async restoreUserActionState(state: UserActionState) {
+    await this.parent.restoreUserActionState(state)
   }
 
   async acceptCurrentUserActionState() {
@@ -1611,25 +1899,13 @@ class PeekabooWindow implements AsyncDisposable, PeekabooOcrParent {
       `ocr-${this.ocrCaptureIndex}-${Date.now()}.png`,
     )
 
-    await this.exec`peekaboo image ${raw(this.targetFlags())} --path ${imagePath} --format png --json`
+    await this.parent.automation.captureWindow(this.windowId, imagePath)
 
     return imagePath
   }
 
   private async readClipboard() {
-    const result = await this.exec`peekaboo clipboard get`
-    return result.stdout.replace(/\n+$/, '')
-  }
-
-  private async visionOcrScriptPath() {
-    return await writeVisionOcrScript(this.assetsDirectory)
-  }
-
-  private async focusedScrollScriptPath() {
-    const scriptPath = join(this.assetsDirectory, 'focused-scroll.swift')
-    await fs.mkdir(this.assetsDirectory, { recursive: true })
-    await fs.writeFile(scriptPath, focusedScrollSwiftSource)
-    return scriptPath
+    return await this.parent.automation.clipboardGet()
   }
 
   private async screenAnnotationScriptPath() {
@@ -2189,6 +2465,862 @@ class PeekabooVideo implements AsyncDisposable {
   }
 }
 
+const macAutomationServerSwiftSource = `
+import AppKit
+import ApplicationServices
+import Carbon.HIToolbox
+import CoreGraphics
+import Darwin
+import Foundation
+import ImageIO
+import ScreenCaptureKit
+import UniformTypeIdentifiers
+import Vision
+
+final class AutomationServer {
+  private var shouldStop = false
+  private var clipboardSlots: [String: String] = [:]
+
+  func run() throws {
+    let server = socket(AF_INET, SOCK_STREAM, 0)
+    guard server >= 0 else { throw ServerError("socket failed") }
+
+    var yes: Int32 = 1
+    setsockopt(server, SOL_SOCKET, SO_REUSEADDR, &yes, socklen_t(MemoryLayout<Int32>.size))
+
+    var address = sockaddr_in()
+    address.sin_family = sa_family_t(AF_INET)
+    address.sin_port = in_port_t(0).bigEndian
+    address.sin_addr = in_addr(s_addr: inet_addr("127.0.0.1"))
+
+    let bindResult = withUnsafePointer(to: &address) {
+      $0.withMemoryRebound(to: sockaddr.self, capacity: 1) {
+        bind(server, $0, socklen_t(MemoryLayout<sockaddr_in>.size))
+      }
+    }
+    guard bindResult == 0 else { throw ServerError("bind failed") }
+    guard listen(server, 32) == 0 else { throw ServerError("listen failed") }
+
+    var boundAddress = sockaddr_in()
+    var boundLength = socklen_t(MemoryLayout<sockaddr_in>.size)
+    withUnsafeMutablePointer(to: &boundAddress) {
+      $0.withMemoryRebound(to: sockaddr.self, capacity: 1) {
+        getsockname(server, $0, &boundLength)
+      }
+    }
+
+    print("PORT \\(Int(UInt16(bigEndian: boundAddress.sin_port)))")
+    fflush(stdout)
+
+    while !shouldStop {
+      let client = accept(server, nil, nil)
+      if client < 0 { continue }
+      handle(client: client)
+      close(client)
+    }
+
+    close(server)
+  }
+
+  private func handle(client: Int32) {
+    do {
+      let request = try readRequest(client: client)
+      let response = try route(path: request.path, body: request.body)
+      try writeResponse(client: client, status: 200, object: response)
+    } catch {
+      let message = String(describing: error)
+      try? writeResponse(client: client, status: 500, object: ["error": message])
+    }
+  }
+
+  private func route(path: String, body: [String: Any]) throws -> [String: Any] {
+    switch path {
+    case "/shutdown":
+      shouldStop = true
+      return ["ok": true]
+    case "/permissions":
+      return [
+        "permissions": [
+          ["name": "Accessibility", "isGranted": AXIsProcessTrusted()],
+          ["name": "Screen Recording", "isGranted": CGPreflightScreenCaptureAccess()],
+        ],
+      ]
+    case "/open":
+      try open(body)
+      return ["ok": true]
+    case "/windows":
+      return ["windows": windows(app: requiredString(body, "app"))]
+    case "/window/focus":
+      try focusWindow(id: requiredInt(body, "windowId"))
+      return ["ok": true]
+    case "/window/close":
+      try closeWindow(id: requiredInt(body, "windowId"))
+      return ["ok": true]
+    case "/image/screen":
+      let path = requiredString(body, "path")
+      let bounds = try captureScreen(path: path)
+      return ["bounds": bounds]
+    case "/image/area":
+      let path = requiredString(body, "path")
+      let bounds = try captureArea(
+        path: path,
+        x: requiredDouble(body, "x"),
+        y: requiredDouble(body, "y"),
+        width: requiredDouble(body, "width"),
+        height: requiredDouble(body, "height")
+      )
+      return ["bounds": bounds]
+    case "/image/window":
+      let path = requiredString(body, "path")
+      let bounds = try captureWindow(path: path, id: requiredInt(body, "windowId"))
+      return ["bounds": bounds]
+    case "/ocr/image":
+      return try ocrImage(
+        path: requiredString(body, "imagePath"),
+        targetText: requiredString(body, "text"),
+        untilText: requiredString(body, "until"),
+        afterText: requiredString(body, "after"),
+        beforeText: requiredString(body, "before")
+      )
+    case "/chrome/evaluate":
+      return ["result": try evaluateChromeJavaScript(requiredString(body, "source"))]
+    case "/mouse/click":
+      click(x: requiredDouble(body, "x"), y: requiredDouble(body, "y"), double: bool(body, "double"))
+      return ["ok": true]
+    case "/mouse/move":
+      moveMouse(
+        x: requiredDouble(body, "x"),
+        y: requiredDouble(body, "y"),
+        durationMs: int(body, "duration") ?? 0,
+        steps: int(body, "steps") ?? 1
+      )
+      return ["ok": true]
+    case "/mouse/drag":
+      drag(
+        fromX: requiredDouble(body, "fromX"),
+        fromY: requiredDouble(body, "fromY"),
+        toX: requiredDouble(body, "toX"),
+        toY: requiredDouble(body, "toY"),
+        durationMs: int(body, "duration") ?? 0,
+        steps: int(body, "steps") ?? 1
+      )
+      return ["ok": true]
+    case "/mouse/scroll":
+      scroll(
+        direction: requiredString(body, "direction"),
+        pixels: requiredInt(body, "pixels"),
+        jump: bool(body, "jump"),
+        delayMs: requiredInt(body, "delay")
+      )
+      return ["ok": true]
+    case "/keyboard/hotkey":
+      hotkey(requiredString(body, "keys"))
+      return ["ok": true]
+    case "/keyboard/press":
+      hotkey(requiredString(body, "keys"))
+      return ["ok": true]
+    case "/keyboard/type":
+      typeText(requiredString(body, "text"), delayMs: int(body, "delay") ?? 10)
+      return ["ok": true]
+    case "/clipboard/get":
+      return ["text": NSPasteboard.general.string(forType: .string) ?? ""]
+    case "/clipboard/set":
+      NSPasteboard.general.clearContents()
+      NSPasteboard.general.setString(requiredString(body, "text"), forType: .string)
+      return ["ok": true]
+    case "/clipboard/save":
+      clipboardSlots[requiredString(body, "slot")] = NSPasteboard.general.string(forType: .string) ?? ""
+      return ["ok": true]
+    case "/clipboard/restore":
+      let text = clipboardSlots[requiredString(body, "slot")] ?? ""
+      NSPasteboard.general.clearContents()
+      NSPasteboard.general.setString(text, forType: .string)
+      return ["ok": true]
+    case "/user-action-state":
+      let point = CGEvent(source: nil)?.location ?? CGPoint(x: 0, y: 0)
+      return [
+        "foregroundApp": NSWorkspace.shared.frontmostApplication?.localizedName ?? "",
+        "mousePosition": ["x": point.x, "y": point.y],
+      ]
+    case "/restore-user-action-state":
+      if let app = body["foregroundApp"] as? String {
+        activate(app: app)
+      }
+      if let mouse = body["mousePosition"] as? [String: Any] {
+        moveMouse(
+          x: requiredDouble(mouse, "x"),
+          y: requiredDouble(mouse, "y"),
+          durationMs: 0,
+          steps: 1
+        )
+      }
+      return ["ok": true]
+    default:
+      throw ServerError("unknown route: \\(path)")
+    }
+  }
+
+  private func open(_ body: [String: Any]) throws {
+    let app = requiredString(body, "app")
+    let target = requiredString(body, "target")
+    let status = try runProcess("/usr/bin/open", ["-a", app, target])
+    if status != 0 {
+      throw ServerError("open failed for \\(app) \\(target)")
+    }
+  }
+
+  private func windows(app: String) -> [[String: Any]] {
+    let options: CGWindowListOption = [.optionOnScreenOnly, .excludeDesktopElements]
+    let rawWindows = CGWindowListCopyWindowInfo(options, kCGNullWindowID) as? [[String: Any]] ?? []
+    return rawWindows.compactMap { info in
+      guard (info[kCGWindowOwnerName as String] as? String) == app else { return nil }
+      let id = info[kCGWindowNumber as String] as? Int ?? 0
+      let title = info[kCGWindowName as String] as? String ?? ""
+      guard let bounds = info[kCGWindowBounds as String] as? [String: Any] else { return nil }
+      return [
+        "window_id": id,
+        "window_title": title,
+        "bounds": [
+          "x": number(bounds["X"]),
+          "y": number(bounds["Y"]),
+          "width": number(bounds["Width"]),
+          "height": number(bounds["Height"]),
+        ],
+      ]
+    }
+  }
+
+  private func focusWindow(id: Int) throws {
+    guard let app = runningAppForWindow(id: id) else {
+      throw ServerError("window app not found: \\(id)")
+    }
+    activate(app: app.localizedName ?? "")
+
+    if let window = axWindow(id: id) {
+      AXUIElementSetAttributeValue(window, kAXMainAttribute as CFString, kCFBooleanTrue)
+      AXUIElementSetAttributeValue(window, kAXFocusedAttribute as CFString, kCFBooleanTrue)
+      AXUIElementPerformAction(window, kAXRaiseAction as CFString)
+    }
+  }
+
+  private func closeWindow(id: Int) throws {
+    guard let window = axWindow(id: id) else {
+      throw ServerError("window not found: \\(id)")
+    }
+    var closeButton: CFTypeRef?
+    if AXUIElementCopyAttributeValue(window, kAXCloseButtonAttribute as CFString, &closeButton) == .success,
+       let button = closeButton {
+      AXUIElementPerformAction((button as! AXUIElement), kAXPressAction as CFString)
+      return
+    }
+    throw ServerError("window close button not found: \\(id)")
+  }
+
+  private func captureScreen(path: String) throws -> [String: Any] {
+    let bounds = CGDisplayBounds(CGMainDisplayID())
+    try captureRect(path: path, rect: bounds, fallbackArguments: ["-x", path])
+    return screenBounds(bounds)
+  }
+
+  private func captureArea(path: String, x: Double, y: Double, width: Double, height: Double) throws -> [String: Any] {
+    let rect = CGRect(x: x, y: y, width: width, height: height)
+    try captureRect(path: path, rect: rect, fallbackArguments: screencaptureRegionArguments(rect, path: path))
+    return screenBounds(rect)
+  }
+
+  private func captureWindow(path: String, id: Int) throws -> [String: Any] {
+    let bounds = windows(app: runningAppForWindow(id: id)?.localizedName ?? "")
+      .first(where: { ($0["window_id"] as? Int) == id })?["bounds"] as? [String: Any]
+    let boundsPayload = bounds.map(screenBoundsFromDictionary) ?? screenBounds(CGRect(x: 0, y: 0, width: 0, height: 0))
+    let rect = CGRect(
+      x: number(boundsPayload["x"]),
+      y: number(boundsPayload["y"]),
+      width: number(boundsPayload["width"]),
+      height: number(boundsPayload["height"])
+    )
+    try captureRect(path: path, rect: rect, fallbackArguments: screencaptureRegionArguments(rect, path: path))
+    return boundsPayload
+  }
+
+  private func captureRect(path: String, rect: CGRect, fallbackArguments: [String]) throws {
+    if let image = try? captureImage(in: rect) {
+      try writePNG(image, path: path)
+      return
+    }
+
+    try createParentDirectory(path)
+    let status = try runProcess("/usr/sbin/screencapture", fallbackArguments)
+    if status != 0 {
+      throw ServerError("screen capture failed: \\(path)")
+    }
+  }
+
+  private func screencaptureRegionArguments(_ rect: CGRect, path: String) -> [String] {
+    let region = "\\(Int(round(rect.origin.x))),\\(Int(round(rect.origin.y))),\\(Int(round(rect.size.width))),\\(Int(round(rect.size.height)))"
+    return ["-x", "-R", region, path]
+  }
+
+  private func captureImage(in rect: CGRect) throws -> CGImage {
+    if #available(macOS 15.2, *) {
+      let semaphore = DispatchSemaphore(value: 0)
+      var capturedImage: CGImage?
+      var capturedError: Error?
+
+      SCScreenshotManager.captureImage(in: rect) { image, error in
+        capturedImage = image
+        capturedError = error
+        semaphore.signal()
+      }
+
+      semaphore.wait()
+
+      if let capturedError {
+        throw capturedError
+      }
+
+      guard let capturedImage else {
+        throw ServerError("screen capture returned no image")
+      }
+
+      return capturedImage
+    }
+
+    throw ServerError("native screenshot capture requires macOS 15.2 or newer")
+  }
+
+  private func ocrImage(
+    path: String,
+    targetText: String,
+    untilText: String,
+    afterText: String,
+    beforeText: String
+  ) throws -> [String: Any] {
+    let imageURL = URL(fileURLWithPath: path)
+
+    guard let image = NSImage(contentsOf: imageURL) else {
+      throw ServerError("could not load OCR image: \\(path)")
+    }
+
+    guard let cgImage = image.cgImage(forProposedRect: nil, context: nil, hints: nil) else {
+      throw ServerError("could not create CGImage for OCR image: \\(path)")
+    }
+
+    var requestError: Error?
+    var observations: [VNRecognizedTextObservation] = []
+    let request = VNRecognizeTextRequest { request, error in
+      requestError = error
+      observations = request.results as? [VNRecognizedTextObservation] ?? []
+    }
+    request.recognitionLevel = .accurate
+    request.usesLanguageCorrection = false
+
+    try VNImageRequestHandler(cgImage: cgImage, options: [:]).perform([request])
+
+    if let requestError {
+      throw requestError
+    }
+
+    var matches: [[String: Any]] = []
+    var recognizedText: [String] = []
+    var textPositions: [[String: Any]] = []
+
+    for (lineIndex, observation) in observations.enumerated() {
+      guard let candidate = observation.topCandidates(1).first else {
+        continue
+      }
+
+      let lineText = candidate.string
+      recognizedText.append(lineText)
+
+      appendTextMatches(
+        to: &matches,
+        text: targetText,
+        lineIndex: lineIndex,
+        candidate: candidate,
+        lineText: lineText,
+        until: untilText
+      )
+
+      for searchText in Set([targetText, untilText, afterText, beforeText]) {
+        appendTextMatches(
+          to: &textPositions,
+          text: searchText,
+          lineIndex: lineIndex,
+          candidate: candidate,
+          lineText: lineText,
+          until: ""
+        )
+      }
+    }
+
+    return [
+      "image": ["height": cgImage.height, "width": cgImage.width],
+      "matches": matches,
+      "recognizedText": recognizedText,
+      "textPositions": textPositions,
+    ]
+  }
+
+  private func appendTextMatches(
+    to output: inout [[String: Any]],
+    text searchText: String,
+    lineIndex: Int,
+    candidate: VNRecognizedText,
+    lineText: String,
+    until searchUntilText: String
+  ) {
+    if searchText.isEmpty {
+      return
+    }
+
+    var searchRange = lineText.startIndex..<lineText.endIndex
+    while let range = lineText.range(
+      of: searchText,
+      options: [.caseInsensitive],
+      range: searchRange
+    ) {
+      let boxRange: Range<String.Index>
+
+      if searchUntilText.isEmpty {
+        boxRange = range
+      } else if let untilRange = lineText.range(
+        of: searchUntilText,
+        options: [.caseInsensitive],
+        range: range.upperBound..<lineText.endIndex
+      ) {
+        boxRange = range.lowerBound..<untilRange.upperBound
+      } else {
+        boxRange = range
+      }
+
+      if let textBox = try? candidate.boundingBox(for: boxRange) {
+        let box = textBox.boundingBox
+        output.append([
+          "boundingBox": [
+            "height": box.height,
+            "width": box.width,
+            "x": box.origin.x,
+            "y": box.origin.y,
+          ],
+          "characterOffset": lineText.distance(from: lineText.startIndex, to: range.lowerBound),
+          "confidence": candidate.confidence,
+          "lineIndex": lineIndex,
+          "lineText": lineText,
+          "text": searchText,
+        ])
+      }
+
+      if range.upperBound == lineText.endIndex {
+        break
+      }
+      searchRange = range.upperBound..<lineText.endIndex
+    }
+  }
+
+  private func evaluateChromeJavaScript(_ source: String) throws -> String {
+    let appleScript = [
+      "tell application \\"Google Chrome\\"",
+      "set resultJson to execute active tab of front window javascript \\(appleScriptString(source))",
+      "end tell",
+      "return resultJson",
+    ].joined(separator: "\\n")
+    var error: NSDictionary?
+
+    guard let script = NSAppleScript(source: appleScript) else {
+      throw ServerError("could not compile Chrome AppleScript")
+    }
+
+    let result = script.executeAndReturnError(&error)
+
+    if let error {
+      throw ServerError("Chrome AppleScript failed: \\(error)")
+    }
+
+    return result.stringValue ?? ""
+  }
+
+  private func click(x: Double, y: Double, double: Bool) {
+    let point = CGPoint(x: x, y: y)
+    let count = double ? 2 : 1
+    for _ in 0..<count {
+      postMouse(type: .leftMouseDown, point: point)
+      usleep(40_000)
+      postMouse(type: .leftMouseUp, point: point)
+      usleep(80_000)
+    }
+  }
+
+  private func moveMouse(x: Double, y: Double, durationMs: Int, steps: Int) {
+    let end = CGPoint(x: x, y: y)
+    let start = CGEvent(source: nil)?.location ?? end
+    let count = max(steps, 1)
+    for index in 1...count {
+      let progress = CGFloat(index) / CGFloat(count)
+      let point = CGPoint(
+        x: start.x + (end.x - start.x) * progress,
+        y: start.y + (end.y - start.y) * progress
+      )
+      CGWarpMouseCursorPosition(point)
+      CGAssociateMouseAndMouseCursorPosition(1)
+      if durationMs > 0 {
+        usleep(useconds_t(max(1, durationMs / count) * 1000))
+      }
+    }
+  }
+
+  private func drag(fromX: Double, fromY: Double, toX: Double, toY: Double, durationMs: Int, steps: Int) {
+    let start = CGPoint(x: fromX, y: fromY)
+    let end = CGPoint(x: toX, y: toY)
+    postMouse(type: .leftMouseDown, point: start)
+    let count = max(steps, 1)
+    for index in 1...count {
+      let progress = CGFloat(index) / CGFloat(count)
+      let point = CGPoint(
+        x: start.x + (end.x - start.x) * progress,
+        y: start.y + (end.y - start.y) * progress
+      )
+      postMouse(type: .leftMouseDragged, point: point)
+      if durationMs > 0 {
+        usleep(useconds_t(max(1, durationMs / count) * 1000))
+      }
+    }
+    postMouse(type: .leftMouseUp, point: end)
+  }
+
+  private func scroll(direction: String, pixels: Int, jump: Bool, delayMs: Int) {
+    let smoothPixelsPerStep = 4
+    let steps = jump ? 1 : max(1, Int(ceil(Double(pixels) / Double(smoothPixelsPerStep))))
+    let pixelsPerStep = jump ? pixels : Int(ceil(Double(pixels) / Double(steps)))
+    let verticalPixels: Int32
+
+    switch direction {
+    case "up":
+      verticalPixels = Int32(pixelsPerStep)
+    case "down":
+      verticalPixels = Int32(-pixelsPerStep)
+    default:
+      return
+    }
+
+    for _ in 0..<steps {
+      CGEvent(
+        scrollWheelEvent2Source: CGEventSource(stateID: .hidSystemState),
+        units: .pixel,
+        wheelCount: 2,
+        wheel1: verticalPixels,
+        wheel2: 0,
+        wheel3: 0
+      )?.post(tap: .cghidEventTap)
+
+      if delayMs > 0 {
+        usleep(useconds_t(delayMs * 1000))
+      }
+    }
+  }
+
+  private func hotkey(_ keys: String) {
+    let parts = keys
+      .replacingOccurrences(of: "+", with: ",")
+      .split(separator: ",")
+      .map { String($0).trimmingCharacters(in: .whitespacesAndNewlines).lowercased() }
+      .filter { !$0.isEmpty }
+    var flags = CGEventFlags()
+    var keyName = parts.last ?? keys.lowercased()
+
+    for part in parts.dropLast() {
+      switch part {
+      case "cmd", "command": flags.insert(.maskCommand)
+      case "ctrl", "control": flags.insert(.maskControl)
+      case "shift": flags.insert(.maskShift)
+      case "option", "alt": flags.insert(.maskAlternate)
+      default: keyName = part
+      }
+    }
+
+    guard let code = keyCode(keyName) else { return }
+    postKey(code: code, flags: flags, down: true)
+    postKey(code: code, flags: flags, down: false)
+  }
+
+  private func typeText(_ text: String, delayMs: Int) {
+    let source = CGEventSource(stateID: .hidSystemState)
+    for scalar in text.unicodeScalars {
+      if scalar.value == 10 {
+        hotkey("return")
+      } else {
+        var value = UniChar(scalar.value)
+        if let down = CGEvent(keyboardEventSource: source, virtualKey: 0, keyDown: true),
+           let up = CGEvent(keyboardEventSource: source, virtualKey: 0, keyDown: false) {
+          down.keyboardSetUnicodeString(stringLength: 1, unicodeString: &value)
+          up.keyboardSetUnicodeString(stringLength: 1, unicodeString: &value)
+          down.post(tap: .cghidEventTap)
+          up.post(tap: .cghidEventTap)
+        }
+      }
+      if delayMs > 0 {
+        usleep(useconds_t(delayMs * 1000))
+      }
+    }
+  }
+
+  private func postMouse(type: CGEventType, point: CGPoint) {
+    CGWarpMouseCursorPosition(point)
+    CGAssociateMouseAndMouseCursorPosition(1)
+    CGEvent(mouseEventSource: CGEventSource(stateID: .hidSystemState), mouseType: type, mouseCursorPosition: point, mouseButton: .left)?
+      .post(tap: .cghidEventTap)
+  }
+
+  private func postKey(code: CGKeyCode, flags: CGEventFlags, down: Bool) {
+    guard let event = CGEvent(keyboardEventSource: CGEventSource(stateID: .hidSystemState), virtualKey: code, keyDown: down) else { return }
+    event.flags = flags
+    event.post(tap: .cghidEventTap)
+  }
+
+  private func keyCode(_ key: String) -> CGKeyCode? {
+    let map: [String: CGKeyCode] = [
+      "a": 0, "s": 1, "d": 2, "f": 3, "h": 4, "g": 5, "z": 6, "x": 7, "c": 8, "v": 9,
+      "b": 11, "q": 12, "w": 13, "e": 14, "r": 15, "y": 16, "t": 17, "1": 18, "2": 19,
+      "3": 20, "4": 21, "6": 22, "5": 23, "=": 24, "9": 25, "7": 26, "-": 27, "8": 28,
+      "0": 29, "]": 30, "o": 31, "u": 32, "[": 33, "i": 34, "p": 35, "return": 36,
+      "enter": 36, "l": 37, "j": 38, "'": 39, "k": 40, ";": 41, "\\\\": 42, ",": 43,
+      "/": 44, "n": 45, "m": 46, ".": 47, "tab": 48, "space": 49, "\\u{60}": 50,
+      "delete": 51, "backspace": 51, "escape": 53, "esc": 53, "left": 123, "right": 124,
+      "down": 125, "up": 126,
+    ]
+    return map[key]
+  }
+
+  private func axWindow(id: Int) -> AXUIElement? {
+    guard let app = runningAppForWindow(id: id) else { return nil }
+    let appElement = AXUIElementCreateApplication(app.processIdentifier)
+    let title = windowTitleForWindow(id: id)
+    var value: CFTypeRef?
+    guard AXUIElementCopyAttributeValue(appElement, kAXWindowsAttribute as CFString, &value) == .success,
+          let windows = value as? [AXUIElement] else {
+      return nil
+    }
+    if let exact = windows.first(where: { windowNumber($0) == id }) {
+      return exact
+    }
+
+    return windows.first { candidate in
+      guard let title, !title.isEmpty else { return false }
+      return axString(candidate, kAXTitleAttribute as CFString) == title
+    }
+  }
+
+  private func windowNumber(_ window: AXUIElement) -> Int? {
+    var value: CFTypeRef?
+    if AXUIElementCopyAttributeValue(window, "AXWindowNumber" as CFString, &value) == .success {
+      return value as? Int
+    }
+    return nil
+  }
+
+  private func windowTitleForWindow(id: Int) -> String? {
+    let rawWindows = CGWindowListCopyWindowInfo(.optionAll, kCGNullWindowID) as? [[String: Any]] ?? []
+    return rawWindows
+      .first { ($0[kCGWindowNumber as String] as? Int) == id }?[kCGWindowName as String] as? String
+  }
+
+  private func axString(_ element: AXUIElement, _ attribute: CFString) -> String? {
+    var value: CFTypeRef?
+    if AXUIElementCopyAttributeValue(element, attribute, &value) == .success {
+      return value as? String
+    }
+    return nil
+  }
+
+  private func runningAppForWindow(id: Int) -> NSRunningApplication? {
+    let rawWindows = CGWindowListCopyWindowInfo(.optionAll, kCGNullWindowID) as? [[String: Any]] ?? []
+    guard let info = rawWindows.first(where: { ($0[kCGWindowNumber as String] as? Int) == id }),
+          let pid = info[kCGWindowOwnerPID as String] as? pid_t else {
+      return nil
+    }
+    return NSRunningApplication(processIdentifier: pid)
+  }
+
+  private func activate(app: String) {
+    if !app.isEmpty {
+      _ = try? runProcess("/usr/bin/osascript", ["-e", "tell application \\"\\(app)\\" to activate"])
+    }
+    NSWorkspace.shared.runningApplications
+      .first { $0.localizedName == app }?
+      .activate(options: [.activateIgnoringOtherApps])
+  }
+
+  private func createParentDirectory(_ path: String) throws {
+    let url = URL(fileURLWithPath: path)
+    try FileManager.default.createDirectory(at: url.deletingLastPathComponent(), withIntermediateDirectories: true)
+  }
+
+  private func writePNG(_ image: CGImage, path: String) throws {
+    let url = URL(fileURLWithPath: path)
+    try createParentDirectory(path)
+    guard let destination = CGImageDestinationCreateWithURL(
+      url as CFURL,
+      UTType.png.identifier as CFString,
+      1,
+      nil
+    ) else {
+      throw ServerError("could not create PNG destination: \\(path)")
+    }
+    CGImageDestinationAddImage(destination, image, nil)
+    guard CGImageDestinationFinalize(destination) else {
+      throw ServerError("could not write PNG: \\(path)")
+    }
+  }
+
+  private func runProcess(_ executable: String, _ arguments: [String]) throws -> Int32 {
+    let process = Process()
+    process.executableURL = URL(fileURLWithPath: executable)
+    process.arguments = arguments
+    try process.run()
+    process.waitUntilExit()
+    return process.terminationStatus
+  }
+
+  private func appleScriptString(_ value: String) -> String {
+    return "\\"" + value
+      .replacingOccurrences(of: "\\\\", with: "\\\\\\\\")
+      .replacingOccurrences(of: "\\"", with: "\\\\\\"")
+      .replacingOccurrences(of: "\\r", with: "\\\\r")
+      .replacingOccurrences(of: "\\n", with: "\\\\n")
+      + "\\""
+  }
+
+  private func screenBounds(_ rect: CGRect) -> [String: Any] {
+    return [
+      "relativeTo": "screen",
+      "x": rect.origin.x,
+      "y": rect.origin.y,
+      "width": rect.size.width,
+      "height": rect.size.height,
+    ]
+  }
+
+  private func screenBoundsFromDictionary(_ value: [String: Any]) -> [String: Any] {
+    return [
+      "relativeTo": "screen",
+      "x": number(value["x"]),
+      "y": number(value["y"]),
+      "width": number(value["width"]),
+      "height": number(value["height"]),
+    ]
+  }
+
+  private func readRequest(client: Int32) throws -> Request {
+    var data = Data()
+    var buffer = [UInt8](repeating: 0, count: 8192)
+
+    while true {
+      let count = recv(client, &buffer, buffer.count, 0)
+      if count <= 0 { break }
+      data.append(buffer, count: count)
+
+      if let parsed = try parseRequest(data) {
+        return parsed
+      }
+    }
+
+    throw ServerError("incomplete HTTP request")
+  }
+
+  private func parseRequest(_ data: Data) throws -> Request? {
+    let separatorBytes = Data([13, 10, 13, 10])
+    guard let separator = data.range(of: separatorBytes),
+          let header = String(data: data.subdata(in: 0..<separator.lowerBound), encoding: .utf8) else {
+      return nil
+    }
+    let lines = header.components(separatedBy: "\\r\\n")
+    guard let first = lines.first else { throw ServerError("missing request line") }
+    let parts = first.split(separator: " ")
+    guard parts.count >= 2 else { throw ServerError("bad request line") }
+    let path = String(parts[1])
+    let contentLength = lines
+      .first { $0.lowercased().hasPrefix("content-length:") }
+      .flatMap { Int($0.split(separator: ":").dropFirst().joined(separator: ":").trimmingCharacters(in: .whitespaces)) } ?? 0
+    let bodyStart = separator.upperBound
+    guard data.count >= bodyStart + contentLength else { return nil }
+    let bodyData = data.subdata(in: bodyStart..<(bodyStart + contentLength))
+    if bodyData.isEmpty {
+      return Request(path: path, body: [:])
+    }
+    let body: [String: Any]
+    do {
+      body = try JSONSerialization.jsonObject(with: bodyData) as? [String: Any] ?? [:]
+    } catch {
+      let rawBody = String(data: bodyData, encoding: .utf8) ?? "<non-utf8>"
+      throw ServerError("could not parse JSON body for \\(path): contentLength=\\(contentLength) bodyStart=\\(bodyStart) dataCount=\\(data.count) body=\\(rawBody) error=\\(error)")
+    }
+    return Request(path: path, body: body)
+  }
+
+  private func writeResponse(client: Int32, status: Int, object: [String: Any]) throws {
+    let body = try JSONSerialization.data(withJSONObject: object)
+    var header = "HTTP/1.1 \\(status) OK\\r\\n"
+    header += "Content-Type: application/json\\r\\n"
+    header += "Content-Length: \\(body.count)\\r\\n"
+    header += "Connection: close\\r\\n\\r\\n"
+    var response = Data(header.utf8)
+    response.append(body)
+    response.withUnsafeBytes { pointer in
+      _ = send(client, pointer.baseAddress, response.count, 0)
+    }
+  }
+
+  private func requiredString(_ body: [String: Any], _ key: String) -> String {
+    return body[key] as? String ?? ""
+  }
+
+  private func requiredInt(_ body: [String: Any], _ key: String) -> Int {
+    return int(body, key) ?? 0
+  }
+
+  private func int(_ body: [String: Any], _ key: String) -> Int? {
+    if let value = body[key] as? Int { return value }
+    if let value = body[key] as? Double { return Int(value) }
+    if let value = body[key] as? String { return Int(value) }
+    return nil
+  }
+
+  private func requiredDouble(_ body: [String: Any], _ key: String) -> Double {
+    return number(body[key])
+  }
+
+  private func bool(_ body: [String: Any], _ key: String) -> Bool {
+    return body[key] as? Bool ?? false
+  }
+
+  private func number(_ value: Any?) -> Double {
+    if let value = value as? Double { return value }
+    if let value = value as? Int { return Double(value) }
+    if let value = value as? CGFloat { return Double(value) }
+    if let value = value as? String { return Double(value) ?? 0 }
+    return 0
+  }
+}
+
+struct Request {
+  let path: String
+  let body: [String: Any]
+}
+
+struct ServerError: Error, CustomStringConvertible {
+  let description: String
+  init(_ description: String) {
+    self.description = description
+  }
+}
+
+do {
+  try AutomationServer().run()
+} catch {
+  fputs("\\(error)\\n", stderr)
+  exit(1)
+}
+`
+
 const screenCaptureRecorderSwiftSource = `
 import AppKit
 import AVFoundation
@@ -2365,10 +3497,13 @@ class PeekabooLocator {
       { updatesUserActionState: true },
       async () => {
         await this.parent.focus()
-        await this.parent.exec`peekaboo click --coords ${this.target.coords} ${raw(this.parent.targetFlags())} --double --no-auto-focus`
+        const coords = this.parent.toScreenCoordinates(
+          windowCoordinatesFromCoordsString(this.target.coords),
+        )
+        await this.parent.automation.click({ ...coords, double: true })
         this.parent.recordAutozoomPoint(
           'click',
-          windowCoordinatesFromCoordsString(this.target.coords),
+          coords,
         )
         await this.parent.sleep(100)
       },
@@ -2404,7 +3539,13 @@ class PeekabooSeeLocator {
         const { element } = await this.resolve()
 
         await this.parent.focus()
-        await this.parent.exec`peekaboo click --on ${element.id} --snapshot latest ${raw(this.parent.targetFlags())} --no-auto-focus`
+        const bounds = element.bounds && { ...element.bounds, relativeTo: 'screen' as const }
+
+        if (!bounds) {
+          throw new Error(`See element has no bounds: ${describeSeeElement(element)}`)
+        }
+
+        await this.parent.automation.click(centerOfScreenBounds(bounds))
         this.recordAutozoom('click', element)
         await this.parent.sleep(100)
       },
@@ -2419,7 +3560,17 @@ class PeekabooSeeLocator {
         const { element } = await this.resolve()
 
         await this.parent.focus()
-        await this.parent.exec`peekaboo move --on ${element.id} --snapshot latest ${raw(this.parent.targetFlags())} --duration 150 --steps 5 --profile linear --no-auto-focus`
+        const bounds = element.bounds && { ...element.bounds, relativeTo: 'screen' as const }
+
+        if (!bounds) {
+          throw new Error(`See element has no bounds: ${describeSeeElement(element)}`)
+        }
+
+        await this.parent.automation.move({
+          ...centerOfScreenBounds(bounds),
+          duration: 150,
+          steps: 5,
+        })
         this.recordAutozoom('hover', element)
         await this.parent.sleep(linger)
       },
@@ -2557,7 +3708,7 @@ class PeekabooDomLocator<TElement extends HTMLElement = HTMLElement> {
       { updatesUserActionState: false },
       async () => {
         const normalizedOptions = normalizeDomAnnotationOptions(text, options)
-        const annotationId = `peekaboo-dom-annotation-${Date.now()}-${Math.random().toString(16).slice(2)}`
+        const annotationId = `macwright-dom-annotation-${Date.now()}-${Math.random().toString(16).slice(2)}`
 
         await this.parent.executeChromeJavaScript(
           {
@@ -2666,7 +3817,7 @@ class PeekabooDomLocator<TElement extends HTMLElement = HTMLElement> {
                 : '-50%'
             overlay.id = id
             overlay.textContent = annotationText
-            overlay.setAttribute('data-peekaboo-dom-annotation', 'true')
+            overlay.setAttribute('data-macwright-dom-annotation', 'true')
 
             if (isEmoji && hasClearBackground) {
               overlay.style.cssText = [
@@ -2742,7 +3893,7 @@ class PeekabooDomLocator<TElement extends HTMLElement = HTMLElement> {
         const bounds = (await this.waitForInfo({ timeout: 5_000 })).screenBounds
         const coords = centerOfScreenBounds(bounds)
 
-        await this.parent.exec`peekaboo click --coords ${coordsString(coords)} --global-coords --no-auto-focus`
+        await this.parent.automation.click(coords)
         this.parent.recordAutozoomBounds('click', bounds)
         await this.parent.sleep(100)
       },
@@ -2774,7 +3925,7 @@ class PeekabooDomLocator<TElement extends HTMLElement = HTMLElement> {
         const bounds = await this.resolveScreenBounds()
         const coords = centerOfScreenBounds(bounds)
 
-        await this.parent.exec`peekaboo move --coords ${coordsString(coords)} --duration 150 --steps 5 --profile linear --no-auto-focus`
+        await this.parent.automation.move({ ...coords, duration: 150, steps: 5 })
         this.parent.recordAutozoomBounds('hover', bounds)
         await this.parent.sleep(linger)
       },
@@ -3080,7 +4231,7 @@ class PeekabooOcrLocator {
       async () => {
         const coords = await this.screenCoordinates(position)
         await this.parent.focus()
-        await this.parent.exec`peekaboo click --coords ${coordsString(coords)} --global-coords --no-auto-focus`
+        await this.parent.automation.click(coords)
         this.parent.recordAutozoomPoint('click', coords)
         await this.parent.sleep(100)
       },
@@ -3101,7 +4252,14 @@ class PeekabooOcrLocator {
         const to = screenCoordinatesForOcrPosition(bounds, 'end')
 
         await this.parent.focus()
-        await this.parent.exec`peekaboo drag --from-coords ${coordsString(from)} --to-coords ${coordsString(to)} --duration 100 --steps 5 --profile linear --no-auto-focus`
+        await this.parent.automation.drag({
+          duration: 100,
+          fromX: from.x,
+          fromY: from.y,
+          steps: 5,
+          toX: to.x,
+          toY: to.y,
+        })
         this.parent.recordAutozoomBounds('click', bounds)
         await this.parent.sleep(linger)
       },
@@ -3136,7 +4294,7 @@ class PeekabooOcrLocator {
         const coords = await this.screenCoordinates(position)
 
         await this.parent.focus()
-        await this.parent.exec`peekaboo click --coords ${coordsString(coords)} --global-coords --double --no-auto-focus`
+        await this.parent.automation.click({ ...coords, double: true })
         this.parent.recordAutozoomPoint('click', coords)
         await this.parent.sleep(100)
       },
@@ -3150,7 +4308,7 @@ class PeekabooOcrLocator {
       async () => {
         const coords = await this.screenCoordinates()
 
-        await this.parent.exec`peekaboo move --coords ${coordsString(coords)} ${raw(this.parent.targetFlags())} --duration 150 --steps 5 --profile linear`
+        await this.parent.automation.move({ ...coords, duration: 150, steps: 5 })
         this.parent.recordAutozoomPoint('hover', coords)
         await this.parent.sleep(linger)
         return this
@@ -3237,7 +4395,14 @@ class PeekabooOcrLocator {
         })
 
         await this.parent.focus()
-        await this.parent.exec`peekaboo drag --from-coords ${from} --to-coords ${to} --duration 100 --steps 5 --no-auto-focus`
+        await this.parent.automation.drag({
+          duration: 100,
+          fromX: bounds.x,
+          fromY: bounds.y,
+          steps: 5,
+          toX: bounds.x + bounds.width,
+          toY: bounds.y + bounds.height,
+        })
         await this.parent.sleep(100)
       },
     )
@@ -3323,7 +4488,7 @@ class PeekabooUserActionGuard {
   }
 
   async acceptCurrentState() {
-    this.expected = await readSystemUserActionState(this.parent.exec)
+    this.expected = await this.parent.readUserActionState()
   }
 
   acceptState(state: UserActionState) {
@@ -3335,7 +4500,7 @@ class PeekabooUserActionGuard {
   }
 
   async assertStill(location: string) {
-    const actual = await readSystemUserActionState(this.parent.exec)
+    const actual = await this.parent.readUserActionState()
 
     if (!this.expected) {
       this.expected = actual
@@ -3361,7 +4526,7 @@ class PeekabooUserActionGuard {
       if (action === 'fail') throw new PeekabooUserActionInterruptedError(event, 'User explicitly requested failure')
 
       await sleep(100)
-      await restoreSystemUserActionState(this.parent.exec, event)
+      await this.parent.restoreUserActionState(event.expected)
     })
     this.expected = cloneUserActionState(event.expected)
   }
@@ -3443,28 +4608,22 @@ function isTemplateStringsArray(
   return Array.isArray(value) && Array.isArray((value as any).raw)
 }
 
-type PeekabooWindowInfo = {
-  bounds: PeekabooBounds
-  window_id: number
-  window_title: string
-}
-
-async function waitForPeekabooWindow(
+async function waitForAutomationWindow(
   parent: PeekabooCommandParent,
   app: string,
   windowTitle: string,
   options: { excludeWindowIds: Set<number> },
-): Promise<PeekabooWindowInfo> {
+): Promise<AutomationWindowInfo> {
   for (let attempt = 0; attempt < 50; attempt += 1) {
-    const peekabooWindow = await findPeekabooWindow(
+    const automationWindow = await findAutomationWindow(
       parent,
       app,
       windowTitle,
       options,
     )
 
-    if (peekabooWindow) {
-      return peekabooWindow
+    if (automationWindow) {
+      return automationWindow
     }
 
     await sleep(200)
@@ -3473,18 +4632,18 @@ async function waitForPeekabooWindow(
   throw new Error(`Cursor window not found for ${windowTitle}`)
 }
 
-async function waitForExternalPeekabooWindow(
+async function waitForExternalAutomationWindow(
   parent: PeekabooCommandParent,
   app: string,
   options: {
     excludeWindowIds: Set<number>
     windowTitle?: string
   },
-): Promise<PeekabooWindowInfo> {
-  let latestWindow: PeekabooWindowInfo | undefined
+): Promise<AutomationWindowInfo> {
+  let latestWindow: AutomationWindowInfo | undefined
 
   for (let attempt = 0; attempt < 50; attempt += 1) {
-    const windows = (await listPeekabooWindows(parent, app))
+    const windows = (await listAutomationWindows(parent, app))
       .filter((window) =>
         options.windowTitle
           ? window.window_title.includes(options.windowTitle)
@@ -3512,35 +4671,35 @@ async function waitForExternalPeekabooWindow(
   throw new Error(`Window not found for ${app}`)
 }
 
-async function findPeekabooWindow(
+async function findAutomationWindow(
   parent: PeekabooCommandParent,
   app: string,
   windowTitle: string,
   options: { excludeWindowIds: Set<number> },
-): Promise<PeekabooWindowInfo | undefined> {
-  const windows = await listPeekabooWindows(parent, app)
+): Promise<AutomationWindowInfo | undefined> {
+  const windows = await listAutomationWindows(parent, app)
 
   return windows
-    .filter((window: PeekabooWindowInfo) =>
+    .filter((window: AutomationWindowInfo) =>
       window.window_title.includes(windowTitle),
     )
-    .filter((window: PeekabooWindowInfo) =>
+    .filter((window: AutomationWindowInfo) =>
       options.excludeWindowIds.size === 0
         ? true
         : !options.excludeWindowIds.has(window.window_id),
     )
     .sort(
-      (left: PeekabooWindowInfo, right: PeekabooWindowInfo) =>
+      (left: AutomationWindowInfo, right: AutomationWindowInfo) =>
         right.window_id - left.window_id,
     )[0]
 }
 
-async function closePeekabooWindows(
+async function closeAutomationWindows(
   parent: PeekabooCommandParent,
   app: string,
   windowTitle: string,
 ) {
-  const windows = await listPeekabooWindows(parent, app)
+  const windows = await listAutomationWindows(parent, app)
   let closedAny = false
 
   for (const window of windows) {
@@ -3549,9 +4708,7 @@ async function closePeekabooWindows(
     }
 
     closedAny = true
-    await parent.exec({ timeout: 15_000 })`peekaboo window close --window-id ${window.window_id}`.catch(
-      () => {},
-    )
+    await parent.automation.closeWindow(window.window_id).catch(() => {})
   }
 
   if (closedAny) {
@@ -3559,18 +4716,15 @@ async function closePeekabooWindows(
   }
 }
 
-async function listPeekabooWindows(
+async function listAutomationWindows(
   parent: PeekabooCommandParent,
   app: string,
-): Promise<PeekabooWindowInfo[]> {
-  const result = await parent.exec({ timeout: 5_000 })`peekaboo window list --app ${app} --json`
-  const payload = JSON.parse(result.stdout)
-  return Array.isArray(payload.data && payload.data.windows)
-    ? payload.data.windows
-    : []
+): Promise<AutomationWindowInfo[]> {
+  const payload = await parent.automation.windows(app)
+  return payload.windows
 }
 
-function isExternalWindowCandidate(app: string, window: PeekabooWindowInfo) {
+function isExternalWindowCandidate(app: string, window: AutomationWindowInfo) {
   const title = window.window_title.trim()
 
   if (title.length === 0) {
@@ -3585,14 +4739,18 @@ function isExternalWindowCandidate(app: string, window: PeekabooWindowInfo) {
 }
 
 async function findOcrMatchInCapturedImage(options: {
+  automation: MacAutomationServer
   captureBounds: PeekabooBounds
-  exec: ComputerExec
   imagePath: string
   options: OcrMatchOptions
-  scriptPath: string
 }): Promise<OcrMatchResult> {
-  const result = await options.exec`swift ${options.scriptPath} ${options.imagePath} ${options.options.text} ${options.options.until || ''} ${options.options.after || ''} ${options.options.before || ''}`
-  const payload = JSON.parse(result.stdout)
+  const payload = await options.automation.ocrImage({
+    after: options.options.after || '',
+    before: options.options.before || '',
+    imagePath: options.imagePath,
+    text: options.options.text,
+    until: options.options.until || '',
+  })
   const recognizedText = Array.isArray(payload.recognizedText)
     ? payload.recognizedText
     : []
@@ -3652,47 +4810,6 @@ async function findOcrMatchInCapturedImage(options: {
     }),
     windowBounds: options.captureBounds,
   }
-}
-
-async function writeVisionOcrScript(assetsDirectory: string) {
-  const scriptPath = join(assetsDirectory, 'vision-ocr.swift')
-  await fs.mkdir(assetsDirectory, { recursive: true })
-  await fs.writeFile(scriptPath, visionOcrSwiftSource)
-  return scriptPath
-}
-
-function peekabooImageLogicalBounds(stdout: string): ScreenBounds {
-  const payload = JSON.parse(stdout)
-  const observation = payload.data &&
-    Array.isArray(payload.data.observations) &&
-    payload.data.observations[0]
-  const bounds = observation &&
-    observation.coordinates &&
-    observation.coordinates.logical_bounds
-
-  if (!isPeekabooLogicalBounds(bounds)) {
-    throw new Error(`Could not read screen bounds from peekaboo image output: ${stdout}`)
-  }
-
-  return {
-    height: Number(bounds[1][1]),
-    relativeTo: 'screen',
-    width: Number(bounds[1][0]),
-    x: Number(bounds[0][0]),
-    y: Number(bounds[0][1]),
-  }
-}
-
-function isPeekabooLogicalBounds(value: unknown): value is [[number, number], [number, number]] {
-  return (
-    Array.isArray(value) &&
-    Array.isArray(value[0]) &&
-    Array.isArray(value[1]) &&
-    typeof value[0][0] === 'number' &&
-    typeof value[0][1] === 'number' &&
-    typeof value[1][0] === 'number' &&
-    typeof value[1][1] === 'number'
-  )
 }
 
 function menuBarPathParts(path: string) {
@@ -3759,69 +4876,6 @@ function submenuRegion(screen: ScreenBounds, menuItemBounds: ScreenBounds): Scre
 
 async function sleep(ms: number) {
   await new Promise((resolve) => setTimeout(resolve, ms))
-}
-
-async function readSystemMousePosition(exec: ComputerExec) {
-  const source = [
-    'import CoreGraphics',
-    'if let event = CGEvent(source: nil) {',
-    'let point = event.location',
-    'print("\\(Int(round(point.x))),\\(Int(round(point.y)))")',
-    '} else {',
-    'fatalError("Could not read mouse location")',
-    '}',
-  ].join('\n')
-  const result = await exec({ timeout: 5_000 })`swift -e ${source}`
-  const match = result.stdout.trim().match(/^(-?\d+),(-?\d+)$/)
-
-  if (!match) {
-    throw new Error(`Could not read mouse position from Swift/CoreGraphics: ${result.stdout}`)
-  }
-
-  return {
-    x: Number(match[1]),
-    y: Number(match[2]),
-  }
-}
-
-async function readSystemForegroundApp(exec: ComputerExec) {
-  const script = 'tell application "System Events" to get name of first application process whose frontmost is true'
-  const result = await exec`osascript -e ${script}`
-  return result.stdout.trim()
-}
-
-async function readSystemUserActionState(exec: ComputerExec): Promise<UserActionState> {
-  const [foregroundApp, mousePosition] = await Promise.all([
-    readSystemForegroundApp(exec),
-    readSystemMousePosition(exec),
-  ])
-
-  return {
-    foregroundApp,
-    mousePosition,
-  }
-}
-
-async function moveSystemMousePosition(exec: ComputerExec, position: MousePosition) {
-  const x = Math.round(position.x)
-  const y = Math.round(position.y)
-  const source = [
-    'import CoreGraphics',
-    `CGWarpMouseCursorPosition(CGPoint(x: ${x}, y: ${y}))`,
-    'CGAssociateMouseAndMouseCursorPosition(1)',
-  ].join('\n')
-
-  await exec({ timeout: 5_000 })`swift -e ${source}`
-}
-
-async function activateForegroundApp(exec: ComputerExec, app: string) {
-  await exec`osascript -e ${`tell application ${appleScriptString(app)} to activate`}`
-}
-
-async function restoreSystemUserActionState(exec: ComputerExec, event: UserActionChangedEvent) {
-  await activateForegroundApp(exec, event.expected.foregroundApp)
-
-  await moveSystemMousePosition(exec, event.expected.mousePosition)
 }
 
 function cloneUserActionState(state: UserActionState): UserActionState {
@@ -4831,6 +5885,17 @@ function windowCoordinatesForScreenCoordinates(
   }
 }
 
+function screenCoordinatesForWindowCoordinates(
+  coords: WindowCoordinates,
+  windowBounds: PeekabooBounds,
+): ScreenCoordinates {
+  return {
+    relativeTo: 'screen',
+    x: Math.round(windowBounds.x + coords.x),
+    y: Math.round(windowBounds.y + coords.y),
+  }
+}
+
 function windowBoundsForScreenBounds(
   bounds: ScreenBounds,
   windowBounds: PeekabooBounds,
@@ -4949,57 +6014,6 @@ function evenNumber(value: number) {
   return rounded - (rounded % 2)
 }
 
-const focusedScrollSwiftSource = `
-import CoreGraphics
-import Foundation
-
-let direction = CommandLine.arguments.dropFirst().first ?? "down"
-let totalPixels = Int32(CommandLine.arguments.dropFirst(2).first ?? "80") ?? 80
-let mode = CommandLine.arguments.dropFirst(3).first ?? "smooth"
-let delayMicroseconds = useconds_t(CommandLine.arguments.dropFirst(4).first ?? "8000") ?? 8_000
-let smoothPixelsPerStep: Int32 = 4
-let steps = mode == "jump" ? 1 : max(1, Int(ceil(Double(totalPixels) / Double(smoothPixelsPerStep))))
-let pixelsPerStep = mode == "jump" ? totalPixels : Int32(ceil(Double(totalPixels) / Double(steps)))
-
-let verticalPixels: Int32
-let horizontalPixels: Int32
-
-switch direction {
-case "up":
-  verticalPixels = pixelsPerStep
-  horizontalPixels = 0
-case "down":
-  verticalPixels = -pixelsPerStep
-  horizontalPixels = 0
-case "left":
-  verticalPixels = 0
-  horizontalPixels = pixelsPerStep
-case "right":
-  verticalPixels = 0
-  horizontalPixels = -pixelsPerStep
-default:
-  fputs("Unknown scroll direction: \\(direction)\\n", stderr)
-  exit(2)
-}
-
-for _ in 0..<steps {
-  guard let event = CGEvent(
-    scrollWheelEvent2Source: nil,
-    units: .pixel,
-    wheelCount: 2,
-    wheel1: verticalPixels,
-    wheel2: horizontalPixels,
-    wheel3: 0
-  ) else {
-    fputs("Could not create scroll event\\n", stderr)
-    exit(1)
-  }
-
-event.post(tap: .cghidEventTap)
-  usleep(delayMicroseconds)
-}
-`
-
 const screenAnnotationSwiftSource = `
 import AppKit
 import Foundation
@@ -5097,168 +6111,6 @@ DispatchQueue.main.asyncAfter(deadline: .now() + durationMs / 1000) {
 }
 
 app.run()
-`
-
-const visionOcrSwiftSource = `
-import AppKit
-import Foundation
-import Vision
-
-struct ImageInfo: Encodable {
-  let height: Int
-  let width: Int
-}
-
-struct Rect: Encodable {
-  let height: Double
-  let width: Double
-  let x: Double
-  let y: Double
-}
-
-struct TextMatch: Encodable {
-  let boundingBox: Rect
-  let characterOffset: Int
-  let confidence: Float
-  let lineIndex: Int
-  let lineText: String
-  let text: String
-}
-
-struct Payload: Encodable {
-  let image: ImageInfo
-  let matches: [TextMatch]
-  let recognizedText: [String]
-  let textPositions: [TextMatch]
-}
-
-let imagePath = CommandLine.arguments[1]
-let targetText = CommandLine.arguments[2]
-let untilText = CommandLine.arguments.count > 3 ? CommandLine.arguments[3] : ""
-let afterText = CommandLine.arguments.count > 4 ? CommandLine.arguments[4] : ""
-let beforeText = CommandLine.arguments.count > 5 ? CommandLine.arguments[5] : ""
-let imageURL = URL(fileURLWithPath: imagePath)
-
-guard let image = NSImage(contentsOf: imageURL) else {
-  fputs("Could not load image at " + imagePath + "\\n", stderr)
-  exit(2)
-}
-
-guard let cgImage = image.cgImage(forProposedRect: nil, context: nil, hints: nil) else {
-  fputs("Could not create CGImage from " + imagePath + "\\n", stderr)
-  exit(2)
-}
-
-var requestError: Error?
-var observations: [VNRecognizedTextObservation] = []
-let request = VNRecognizeTextRequest { request, error in
-  requestError = error
-  observations = request.results as? [VNRecognizedTextObservation] ?? []
-}
-request.recognitionLevel = .accurate
-request.usesLanguageCorrection = false
-
-try VNImageRequestHandler(cgImage: cgImage, options: [:]).perform([request])
-
-if let requestError {
-  throw requestError
-}
-
-var matches: [TextMatch] = []
-var recognizedText: [String] = []
-var textPositions: [TextMatch] = []
-
-func appendTextMatches(
-  to output: inout [TextMatch],
-  text searchText: String,
-  lineIndex: Int,
-  candidate: VNRecognizedText,
-  lineText: String,
-  until searchUntilText: String = ""
-) {
-  if searchText.isEmpty {
-    return
-  }
-
-  var searchRange = lineText.startIndex..<lineText.endIndex
-  while let range = lineText.range(of: searchText, options: [.caseInsensitive], range: searchRange) {
-    let boxRange: Range<String.Index>
-
-    if searchUntilText.isEmpty {
-      boxRange = range
-    } else if let untilRange = lineText.range(
-      of: searchUntilText,
-      options: [.caseInsensitive],
-      range: range.upperBound..<lineText.endIndex
-    ) {
-      boxRange = range.lowerBound..<untilRange.upperBound
-    } else {
-      boxRange = range
-    }
-
-    if let textBox = try? candidate.boundingBox(for: boxRange) {
-      let box = textBox.boundingBox
-      output.append(TextMatch(
-        boundingBox: Rect(
-          height: box.height,
-          width: box.width,
-          x: box.origin.x,
-          y: box.origin.y
-        ),
-        characterOffset: lineText.distance(from: lineText.startIndex, to: range.lowerBound),
-        confidence: candidate.confidence,
-        lineIndex: lineIndex,
-        lineText: lineText,
-        text: searchText
-      ))
-    }
-
-    if range.upperBound == lineText.endIndex {
-      break
-    }
-    searchRange = range.upperBound..<lineText.endIndex
-  }
-}
-
-for (lineIndex, observation) in observations.enumerated() {
-  guard let candidate = observation.topCandidates(1).first else {
-    continue
-  }
-
-  let lineText = candidate.string
-  recognizedText.append(lineText)
-
-  appendTextMatches(
-    to: &matches,
-    text: targetText,
-    lineIndex: lineIndex,
-    candidate: candidate,
-    lineText: lineText,
-    until: untilText
-  )
-
-  for searchText in Set([targetText, untilText, afterText, beforeText]) {
-    appendTextMatches(
-      to: &textPositions,
-      text: searchText,
-      lineIndex: lineIndex,
-      candidate: candidate,
-      lineText: lineText
-    )
-  }
-}
-
-let payload = Payload(
-  image: ImageInfo(height: cgImage.height, width: cgImage.width),
-  matches: matches,
-  recognizedText: recognizedText,
-  textPositions: textPositions
-)
-let encoder = JSONEncoder()
-encoder.outputFormatting = [.sortedKeys]
-let data = try encoder.encode(payload)
-FileHandle.standardOutput.write(data)
-FileHandle.standardOutput.write("\\n".data(using: .utf8)!)
 `
 
 async function runShellCommand(
