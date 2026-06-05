@@ -3217,8 +3217,7 @@ final class AutomationServer {
         x: start.x + (end.x - start.x) * progress,
         y: start.y + (end.y - start.y) * progress
       )
-      CGWarpMouseCursorPosition(point)
-      CGAssociateMouseAndMouseCursorPosition(1)
+      postMouseMoved(point: point)
       if durationMs > 0 {
         usleep(useconds_t(max(1, durationMs / count) * 1000))
       }
@@ -3330,6 +3329,18 @@ final class AutomationServer {
     process.arguments = [message]
     try? process.run()
     sayProcess = process
+  }
+
+  private func postMouseMoved(point: CGPoint) {
+    CGWarpMouseCursorPosition(point)
+    CGAssociateMouseAndMouseCursorPosition(1)
+    let event = CGEvent(
+      mouseEventSource: CGEventSource(stateID: .hidSystemState),
+      mouseType: .mouseMoved,
+      mouseCursorPosition: point,
+      mouseButton: .left
+    )
+    event?.post(tap: .cghidEventTap)
   }
 
   private func postMouse(type: CGEventType, point: CGPoint, clickState: Int = 1) {
@@ -6248,7 +6259,7 @@ function centerOfScreenBounds(bounds: ScreenBounds): ScreenCoordinates {
 }
 
 function ocrClickY(bounds: ScreenBounds) {
-  return Math.round(bounds.y + bounds.height * 0.9)
+  return Math.round(bounds.y + bounds.height / 2)
 }
 
 function screenCoordinatesForOcrPosition(

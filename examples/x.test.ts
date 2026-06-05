@@ -26,6 +26,7 @@ test('draft an X post', async () => {
   ].join('\n\n'))
   
   await dom.getByLabel('Add photos or video').click()
+  await computer.ocr('Downloads').waitFor()
   await computer.ocr('post.mp4').dblclick() // click anything, anywhere on screen - this is in the Finder dialog
 
   await video.fastForward({ maxDuration: '2s' }, async () => {
