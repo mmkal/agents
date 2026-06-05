@@ -1,4 +1,5 @@
 import { spawn } from 'node:child_process'
+import { createHash } from 'node:crypto'
 import { EventEmitter } from 'node:events'
 import { existsSync, mkdtempSync } from 'node:fs'
 import * as fs from 'node:fs/promises'
@@ -439,9 +440,8 @@ class MacAutomationServer {
   async start() {
     await fs.mkdir(this.assetsDirectory, { recursive: true })
     const sourcePath = join(this.assetsDirectory, 'mac-automation-server.swift')
-    const binaryPath = join(this.assetsDirectory, 'mac-automation-server')
     await fs.writeFile(sourcePath, macAutomationServerSwiftSource)
-    await this.exec({ timeout: 60_000 })`xcrun swiftc ${sourcePath} -o ${binaryPath}`
+    const binaryPath = await this.compiledBinaryPath(sourcePath)
 
     const child = spawn(binaryPath, [], {
       stdio: ['ignore', 'pipe', 'pipe'],
@@ -700,6 +700,40 @@ class MacAutomationServer {
       child.once('exit', onExit)
       child.once('error', onError)
     })
+  }
+
+  private async compiledBinaryPath(sourcePath: string) {
+    const hash = createHash('sha256')
+      .update(macAutomationServerSwiftSource)
+      .digest('hex')
+      .slice(0, 16)
+    const cacheDirectory = join(tmpdir(), 'macwright-swift-cache')
+    const binaryPath = join(cacheDirectory, `mac-automation-server-${hash}`)
+
+    await fs.mkdir(cacheDirectory, { recursive: true })
+
+    if (existsSync(binaryPath)) {
+      return binaryPath
+    }
+
+    const temporaryBinaryPath = join(
+      cacheDirectory,
+      `mac-automation-server-${hash}-${process.pid}-${Date.now()}`,
+    )
+
+    await this.exec({ timeout: 60_000 })`xcrun swiftc ${sourcePath} -o ${temporaryBinaryPath}`
+
+    try {
+      await fs.rename(temporaryBinaryPath, binaryPath)
+    } catch (error) {
+      if ((error as any).code !== 'EEXIST' || !existsSync(binaryPath)) {
+        throw error
+      }
+
+      await fs.rm(temporaryBinaryPath, { force: true })
+    }
+
+    return binaryPath
   }
 }
 

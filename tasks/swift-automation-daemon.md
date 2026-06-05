@@ -51,3 +51,4 @@ The API surface used by `examples/x.test.ts`, `examples/sqlfu.test.ts`, and `exa
 - 2026-06-05: Added an early startup error when the daemon sees `loginwindow` as foreground, and made `PeekabooComputer.create()` dispose the daemon/temp directory on startup failures.
 - 2026-06-05: Moved `allowJavaScriptFromAppleEvents('Google Chrome')` into the daemon. The daemon now probes Chrome JavaScript Apple Events, captures/restores tab URLs, quits Chrome, patches both preference locations, restarts Chrome, and verifies the setting.
 - 2026-06-05: Added a focused regression test for the daemon-backed examples so `x.test.ts`, `sqlfu.test.ts`, `tsc-cursor-compwright.test.ts`, and `peekaboo-computer.ts` do not regain direct Peekaboo CLI command calls.
+- 2026-06-05: Cached the compiled Swift daemon binary under `/tmp/macwright-swift-cache` by source hash, so repeated `PeekabooComputer.create()` calls skip recompilation until the daemon source changes.
