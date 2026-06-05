@@ -44,6 +44,17 @@ type GuardedActionOptions = {
   updatesUserActionState: boolean
 }
 
+type OpenOptions = {
+  closeOnDispose?: boolean
+  waitUntilReady?: boolean
+  windowTitle?: string
+}
+
+type LegacyOpenOptions = {
+  app: string
+  waitUntilReady?: boolean
+}
+
 type ActionMouseMovementOptions = {
   duration?: number
   enabled: boolean
@@ -943,42 +954,91 @@ export class PeekabooComputer
     return this.userActionGuard.expectedState()
   }
 
+  async open(app: string, target: string, options?: OpenOptions): Promise<PeekabooWindow>
+  async open(target: string, options: LegacyOpenOptions): Promise<PeekabooWindow>
   async open(
-    target: string,
-    options: {
-      app: string
-      waitUntilReady: boolean
-    },
-  ) {
+    appOrTarget: string,
+    targetOrOptions: string | LegacyOpenOptions,
+    maybeOptions: OpenOptions = {},
+  ): Promise<PeekabooWindow> {
+    let app: string
+    let target: string
+    let openOptions: OpenOptions
+
+    if (typeof targetOrOptions === 'string') {
+      app = appOrTarget
+      target = targetOrOptions
+      openOptions = maybeOptions
+    } else {
+      app = targetOrOptions.app
+      target = appOrTarget
+      openOptions = targetOrOptions
+    }
+
+    const options = {
+      closeOnDispose: true,
+      waitUntilReady: true,
+      ...openOptions,
+    }
+
     return await this.guardedAction('open', { updatesUserActionState: true }, async () => {
       const windowTitle = basename(this.directory)
-      const resolvedTarget = this.resolvePath(target)
+      const isUrlTarget = openTargetHasScheme(target)
+      const resolvedTarget = isUrlTarget ? target : this.resolvePath(target)
+
+      if (isUrlTarget) {
+        const previousWindowIds = new Set(
+          (await listAutomationWindows(this, app)).map((window) => window.window_id),
+        )
+
+        await this.automation.open({ app, target: resolvedTarget })
+        const automationWindow = await waitForExternalAutomationWindow(
+          this,
+          app,
+          {
+            excludeWindowIds: previousWindowIds,
+            windowTitle: options.windowTitle,
+          },
+        )
+
+        return new PeekabooWindow({
+          app,
+          assetsDirectory: this.assetsDirectory,
+          clipboardSlot: `demo-helper-${basename(this.directory)}`,
+          closeOnDispose: options.closeOnDispose,
+          directory: this.directory,
+          parent: this,
+          windowBounds: automationWindow.bounds,
+          windowId: automationWindow.window_id,
+        })
+      }
+
       const previousWindowIds =
         resolvedTarget === this.directory
           ? new Set(
-              (await listAutomationWindows(this, options.app))
+              (await listAutomationWindows(this, app))
                 .filter((window) => window.window_title.includes(windowTitle))
                 .map((window) => window.window_id),
             )
           : new Set<number>()
 
       if (resolvedTarget === this.directory) {
-        await closeAutomationWindows(this, options.app, windowTitle)
+        await closeAutomationWindows(this, app, windowTitle)
       }
 
-      await this.automation.open({ app: options.app, target: resolvedTarget })
+      await this.automation.open({ app, target: resolvedTarget })
       const automationWindow = await waitForAutomationWindow(
         this,
-        options.app,
+        app,
         windowTitle,
         { excludeWindowIds: previousWindowIds },
       )
 
       return new PeekabooWindow({
-        app: options.app,
+        app,
         assetsDirectory: this.assetsDirectory,
         clipboardSlot: `demo-helper-${basename(this.directory)}`,
-        closeOnDispose: true,
+        closeOnDispose: options.closeOnDispose,
         directory: this.directory,
         parent: this,
         windowBounds: automationWindow.bounds,
@@ -996,31 +1056,10 @@ export class PeekabooComputer
       windowTitle?: string
     },
   ) {
-    return await this.guardedAction('open external', { updatesUserActionState: true }, async () => {
-      const previousWindowIds = new Set(
-        (await listAutomationWindows(this, options.app)).map((window) => window.window_id),
-      )
-
-      await this.automation.open({ app: options.app, target })
-      const automationWindow = await waitForExternalAutomationWindow(
-        this,
-        options.app,
-        {
-          excludeWindowIds: previousWindowIds,
-          windowTitle: options.windowTitle,
-        },
-      )
-
-      return new PeekabooWindow({
-        app: options.app,
-        assetsDirectory: this.assetsDirectory,
-        clipboardSlot: `demo-helper-${basename(this.directory)}`,
-        closeOnDispose: options.closeOnDispose,
-        directory: this.directory,
-        parent: this,
-        windowBounds: automationWindow.bounds,
-        windowId: automationWindow.window_id,
-      })
+    return await this.open(options.app, target, {
+      closeOnDispose: options.closeOnDispose,
+      waitUntilReady: options.waitUntilReady,
+      windowTitle: options.windowTitle,
     })
   }
 
@@ -4977,6 +5016,10 @@ function isExternalWindowCandidate(_app: string, window: AutomationWindowInfo) {
   }
 
   return true
+}
+
+function openTargetHasScheme(target: string) {
+  return /^[a-z][a-z0-9+.-]*:/i.test(target)
 }
 
 async function findOcrMatchInCapturedImage(options: {

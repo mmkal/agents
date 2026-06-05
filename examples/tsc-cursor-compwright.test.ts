@@ -35,12 +35,12 @@ test('tsc in Cursor', async () => {
     permissions: expect.objectContaining({ name: "Accessibility", isGranted: true })
   })
 
-  await using ide = await computer.open('.', { app: "Cursor", waitUntilReady: true })
+  await using ide = await computer.open("Cursor", '.')
 
   await ide.hotkey('cmd,k')
   await ide.hotkey('cmd,w')
 
-  await computer.open('test.ts', { app: "Cursor", waitUntilReady: true })
+  await computer.open("Cursor", 'test.ts')
 
   await ide.hotkey('cmd,1')
   await ide.click(ide.center())
@@ -86,7 +86,7 @@ test('tsc in Cursor', async () => {
 
   await computer.waitForFile('test.js', { contains: 'Hello' })
 
-  await computer.open('test.js', { app: "Cursor", waitUntilReady: true })
+  await computer.open("Cursor", 'test.js')
 },
 180_000,
 )

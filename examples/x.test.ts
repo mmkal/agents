@@ -13,7 +13,7 @@ test('draft an X post', async () => {
   })
   await computer.allowJavaScriptFromAppleEvents('Google Chrome')
 
-  await using x = await computer.openExternal('https://x.com/mmkalmmkal', {app: 'Google Chrome', closeOnDispose: false, waitUntilReady: true})
+  const x = await computer.open('Google Chrome', 'https://x.com/mmkalmmkal')
 
   await using video = await x.startVideo()
   video.onSave(async (paths) => await fs.copyFile(paths.tightPath, videoPath))

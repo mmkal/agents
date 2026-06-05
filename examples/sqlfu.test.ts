@@ -51,11 +51,11 @@ test('sqlfu demo', async () => {
 
   expect(await computer.glob('node_modules/sqlfu/package.json')).toHaveLength(1)
 
-  await using ide = await computer.open('.', { app: 'Cursor', waitUntilReady: true })
+  await using ide = await computer.open('Cursor', '.')
 
   await ide.hotkey(['cmd,k', 'cmd,w'])
 
-  await computer.open('posts-object.ts', { app: 'Cursor', waitUntilReady: true })
+  await computer.open('Cursor', 'posts-object.ts')
 
   await ide.click(ide.center())
 
