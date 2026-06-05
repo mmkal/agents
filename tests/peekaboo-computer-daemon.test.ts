@@ -7,7 +7,10 @@ import { join } from 'node:path'
 import { promisify } from 'node:util'
 import { expect, test } from 'vitest'
 
-import { macAutomationServerSwiftSource } from '../examples/peekaboo-computer.ts'
+import {
+  macAutomationServerSwiftSource,
+  peekabooComputerVideoTestInternals,
+} from '../examples/peekaboo-computer.ts'
 
 const execFileAsync = promisify(execFile)
 
@@ -42,6 +45,31 @@ test('peekaboo computer helper-backed examples do not call the peekaboo CLI', as
       'examples/x.test.ts',
     ]),
   )
+})
+
+test('video fast-forward maxDuration is resolved after dead-air removal', () => {
+  const segments = peekabooComputerVideoTestInternals.tightVideoSegments({
+    deadAir: [{ start: 5_000, end: 15_000 }],
+    fastForward: [{ start: 0, end: 20_000, maxDuration: '5s' }],
+    finalEnd: 20_000,
+  })
+
+  expect(segments).toEqual([
+    { start: 0, end: 5_000, speed: 2 },
+    { start: 15_000, end: 20_000, speed: 2 },
+  ])
+})
+
+test('video fast-forward metadata preserves user intent', () => {
+  const spans = peekabooComputerVideoTestInternals.normalizeVideoFastForwardSpans([
+    { start: 30, end: 40, speed: '2.5x' },
+    { start: 10, end: 20, maxDuration: '2s' },
+  ])
+
+  expect(spans).toEqual([
+    { start: 10, end: 20, maxDuration: '2s' },
+    { start: 30, end: 40, speed: '2.5x' },
+  ])
 })
 
 test.skipIf(process.platform !== 'darwin')('mac automation daemon Swift source compiles', async () => {

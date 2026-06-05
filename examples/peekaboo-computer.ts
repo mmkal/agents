@@ -198,9 +198,11 @@ type VideoFastForwardOptions =
       speed: `${number}x`
     }
 
-type VideoFastForwardSpan = VideoSpan & {
+type ResolvedVideoFastForwardSpan = VideoSpan & {
   speed: number
 }
+
+type VideoFastForwardSpan = VideoSpan & VideoFastForwardOptions
 
 type VideoStepSpan = VideoSpan & {
   title: string
@@ -2050,6 +2052,8 @@ class PeekabooVideo implements AsyncDisposable {
     options: VideoFastForwardOptions,
     action: () => Promise<T>,
   ) {
+    validateVideoFastForwardOptions(options)
+
     if (!this.startedAt || this.saved || this.fastForwardDepth > 0) {
       return await action()
     }
@@ -2066,12 +2070,11 @@ class PeekabooVideo implements AsyncDisposable {
         const endMs = performance.now() - this.startedAt
         const start = Math.round(startMs)
         const end = Math.round(endMs)
-        const speed = videoFastForwardSpeed(options, end - start)
 
-        if (speed > 1 && end > start) {
+        if (end > start) {
           this.fastForwardSpans.push({
+            ...options,
             end,
-            speed,
             start,
           })
         }
@@ -3646,7 +3649,13 @@ struct Recorder {
     try await stream.startCapture()
     FileHandle.standardOutput.write("ready\\n".data(using: .utf8)!)
     _ = await stopTask.result
-    try await stream.stopCapture()
+    do {
+      try await stream.stopCapture()
+    } catch let error as NSError
+      where error.domain == "com.apple.ScreenCaptureKit.SCStreamErrorDomain" &&
+        error.code == -3808 {
+      // The stream can already be stopped by ScreenCaptureKit during teardown.
+    }
     try await writer.finish()
   }
 }
@@ -5228,6 +5237,15 @@ function videoFastForwardSpeed(
   return roundVideoSpeed(durationMs / maxDurationMs)
 }
 
+function validateVideoFastForwardOptions(options: VideoFastForwardOptions) {
+  if (options.speed) {
+    parseVideoSpeed(options.speed)
+    return
+  }
+
+  parseVideoDurationMs(options.maxDuration)
+}
+
 function roundVideoSpeed(value: number) {
   return Math.round(value * 1000) / 1000
 }
@@ -5348,7 +5366,7 @@ function tightVideoSegments(options: {
     options.fastForward
       .map((span) => {
         const clipped = clipVideoSpan(span, finalEnd)
-        return clipped ? { ...clipped, speed: span.speed } : undefined
+        return clipped ? { ...span, ...clipped } : undefined
       })
       .filter((span): span is VideoFastForwardSpan => Boolean(span)),
   )
@@ -5378,7 +5396,12 @@ function tightVideoSegments(options: {
       1,
       ...fastForward
         .filter((span) => videoSpansOverlap(span, { end, start }))
-        .map((span) => span.speed),
+        .map((span) =>
+          videoFastForwardSpeed(
+            span,
+            videoSpanDurationWithoutDeadAir(span, deadAir),
+          ),
+        ),
     )
     const previous = segments[segments.length - 1]
 
@@ -5421,6 +5444,23 @@ function clipVideoSpan(
 
 function videoSpansOverlap(left: VideoSpan, right: VideoSpan) {
   return left.start < right.end && right.start < left.end
+}
+
+function videoSpanOverlapDuration(left: VideoSpan, right: VideoSpan) {
+  return Math.max(0, Math.min(left.end, right.end) - Math.max(left.start, right.start))
+}
+
+function videoSpanDurationWithoutDeadAir(
+  span: VideoSpan,
+  deadAir: VideoSpan[],
+) {
+  const deadAirDuration = deadAir.reduce(
+    (duration, deadAirSpan) =>
+      duration + videoSpanOverlapDuration(span, deadAirSpan),
+    0,
+  )
+
+  return Math.max(0, span.end - span.start - deadAirDuration)
 }
 
 function autozoomVideoFilter(options: {
@@ -5624,13 +5664,25 @@ function normalizeVideoFastForwardSpans(
   spans: VideoFastForwardSpan[],
 ): VideoFastForwardSpan[] {
   return spans
-    .filter((span) => span.end > span.start && span.speed > 1)
+    .filter((span) => span.end > span.start)
     .sort((left, right) => left.start - right.start)
-    .map((span) => ({
-      end: span.end,
-      speed: roundVideoSpeed(span.speed),
-      start: span.start,
-    }))
+    .map((span) => {
+      validateVideoFastForwardOptions(span)
+
+      if (span.speed) {
+        return {
+          end: span.end,
+          speed: `${formatVideoSpeed(parseVideoSpeed(span.speed))}x` as `${number}x`,
+          start: span.start,
+        }
+      }
+
+      return {
+        end: span.end,
+        maxDuration: span.maxDuration,
+        start: span.start,
+      }
+    })
 }
 
 function normalizeVideoZoomEvents(
@@ -5665,6 +5717,11 @@ function normalizeVideoZoomEvents(
   }
 
   return spans
+}
+
+export const peekabooComputerVideoTestInternals = {
+  normalizeVideoFastForwardSpans,
+  tightVideoSegments,
 }
 
 function autozoomWords(text: string) {
