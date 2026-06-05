@@ -5,7 +5,7 @@ size: large
 
 # Swift Automation Daemon
 
-Status summary: implementation is well underway. `examples/peekaboo-computer.ts` now starts a JIT-compiled Swift HTTP daemon and routes permissions, window operations, mouse/keyboard/scroll actions, clipboard, user-action state, screenshot capture, Vision OCR, and Chrome JavaScript evaluation through it. TypeScript and daemon compile smoke checks pass; full UI demo validation is currently blocked because this session reports `loginwindow` as the focused CG window, and even the old `peekaboo click` path refuses to interact in that state.
+Status summary: implementation is well underway. `examples/peekaboo-computer.ts` now starts a JIT-compiled Swift HTTP daemon and routes permissions, window operations, mouse/keyboard/scroll actions, clipboard, user-action state, screenshot capture, Vision OCR, Chrome JavaScript evaluation, and Chrome Apple Events preference setup through it. TypeScript and daemon compile smoke checks pass; full UI demo validation is currently blocked because this session reports `loginwindow` as the focused CG window, and even the old `peekaboo click` path refuses to interact in that state.
 
 ## Goal
 
@@ -48,3 +48,4 @@ The API surface used by `examples/x.test.ts`, `examples/sqlfu.test.ts`, and `exa
 - 2026-06-05: Moved smooth pixel scrolling into `/mouse/scroll`, removing the generated `focused-scroll.swift` helper.
 - 2026-06-05: Replaced direct `screencapture` screenshot endpoints with a ScreenCaptureKit-first path plus `screencapture` fallback. The fallback was needed in this session because `SCScreenshotManager.captureImage(in:)` returned no image while the foreground CG window was `loginwindow`.
 - 2026-06-05: Added an early startup error when the daemon sees `loginwindow` as foreground, and made `PeekabooComputer.create()` dispose the daemon/temp directory on startup failures.
+- 2026-06-05: Moved `allowJavaScriptFromAppleEvents('Google Chrome')` into the daemon. The daemon now probes Chrome JavaScript Apple Events, captures/restores tab URLs, quits Chrome, patches both preference locations, restarts Chrome, and verifies the setting.

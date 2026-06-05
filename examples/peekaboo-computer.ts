@@ -2,19 +2,12 @@ import { spawn } from 'node:child_process'
 import { EventEmitter } from 'node:events'
 import { existsSync, mkdtempSync } from 'node:fs'
 import * as fs from 'node:fs/promises'
-import { homedir, tmpdir } from 'node:os'
+import { tmpdir } from 'node:os'
 import { basename, isAbsolute, join } from 'node:path'
 import { performance } from 'node:perf_hooks'
 
 function shellQuote(value: string) {
   return `'${value.replace(/'/g, `'\\''`)}'`
-}
-
-function appleScriptString(value: string) {
-  return `"${value
-    .replace(/\\/g, '\\\\')
-    .replace(/"/g, '\\"')
-    .replace(/\r?\n/g, '\\n')}"`
 }
 
 function slugify(value: string) {
@@ -544,6 +537,17 @@ class MacAutomationServer {
     return await this.post<{ result: string }>('/chrome/evaluate', { source })
   }
 
+  async isChromeJavaScriptFromAppleEventsAllowed(app: 'Google Chrome') {
+    return await this.post<{ allowed: boolean }>(
+      '/chrome/javascript-apple-events-allowed',
+      { app },
+    )
+  }
+
+  async allowChromeJavaScriptFromAppleEvents(app: 'Google Chrome') {
+    await this.post('/chrome/allow-javascript-apple-events', { app })
+  }
+
   async click(options: {
     double?: boolean
     x: number
@@ -956,23 +960,13 @@ export class PeekabooComputer
       throw new Error(`Only Google Chrome is supported for Apple Events JavaScript. App: ${app}`)
     }
 
-    if (await this.isJavaScriptFromAppleEventsAllowed(app)) {
-      return
-    }
-
-    const session = await this.captureChromeSession(app)
-    await this.quitApp(app)
-    await this.enableChromeJavaScriptFromAppleEventsPreference()
-    await this.exec({ timeout: 15_000 })`open -a ${app} --args --restore-last-session`
-
-    if (!(await this.waitForChromeWindow(app, 15_000))) {
-      await this.restoreChromeSession(app, session)
-      await this.waitForChromeWindow(app, 15_000)
-    }
-
-    if (await this.isJavaScriptFromAppleEventsAllowed(app)) return
-
-    throw new Error(`Could not enable JavaScript from Apple Events for ${app}`)
+    await this.guardedAction(
+      'allow JavaScript from Apple Events',
+      { updatesUserActionState: true },
+      async () => {
+        await this.automation.allowChromeJavaScriptFromAppleEvents(app)
+      },
+    )
   }
 
   async isJavaScriptFromAppleEventsAllowed(app: 'Google Chrome') {
@@ -980,28 +974,8 @@ export class PeekabooComputer
       throw new Error(`Only Google Chrome is supported for Apple Events JavaScript. App: ${app}`)
     }
 
-    const probeSource = '(() => 1)()'
-    const appleScript = [
-      `tell application ${appleScriptString(app)}`,
-      `set probeResult to execute active tab of front window javascript ${appleScriptString(probeSource)}`,
-      'end tell',
-      'return probeResult',
-    ]
-
-    try {
-      await this.exec`osascript ${raw(appleScript.map((line) => `-e ${shellQuote(line)}`).join(' '))}`
-      return true
-    } catch (error) {
-      if (String(error).includes('Executing JavaScript through AppleScript is turned off')) {
-        return false
-      }
-
-      if (String(error).includes('Invalid index')) {
-        return false
-      }
-
-      throw error
-    }
+    const result = await this.automation.isChromeJavaScriptFromAppleEventsAllowed(app)
+    return result.allowed
   }
 
   menubar(path: string) {
@@ -1154,94 +1128,6 @@ export class PeekabooComputer
 
   async sleep(ms: number) {
     await sleep(ms)
-  }
-
-  private async captureChromeSession(app: 'Google Chrome'): Promise<string[][]> {
-    const script = [
-      `const chrome = Application(${JSON.stringify(app)});`,
-      'JSON.stringify(chrome.windows().map((window) => window.tabs().map((tab) => tab.url()).filter(Boolean)).filter((urls) => urls.length > 0));',
-    ].join(' ')
-
-    try {
-      const result = await this.exec`osascript -l JavaScript -e ${script}`
-      return JSON.parse(result.stdout.trim())
-    } catch {
-      return []
-    }
-  }
-
-  private async chromePreferencePaths() {
-    const chromeDirectory = join(homedir(), 'Library/Application Support/Google/Chrome')
-    const entries = await fs.readdir(chromeDirectory, { withFileTypes: true })
-    return entries
-      .filter((entry) => entry.isDirectory())
-      .map((entry) => entry.name)
-      .filter((name) => name === 'Default' || name.startsWith('Profile '))
-      .map((name) => join(chromeDirectory, name, 'Preferences'))
-      .filter((path) => existsSync(path))
-  }
-
-  private async enableChromeJavaScriptFromAppleEventsPreference() {
-    const paths = await this.chromePreferencePaths()
-
-    if (paths.length === 0) {
-      throw new Error('Could not find any Google Chrome profile Preferences files')
-    }
-
-    for (const path of paths) {
-      const backup = `${path}.pre-allow-js-apple-events-bak-ignoreme-${Date.now()}`
-      const prefs = JSON.parse(await fs.readFile(path, 'utf8'))
-      prefs.browser ||= {}
-      prefs.account_values ||= {}
-      prefs.account_values.browser ||= {}
-      prefs.browser.allow_javascript_apple_events = true
-      prefs.account_values.browser.allow_javascript_apple_events = true
-
-      await fs.copyFile(path, backup)
-      await fs.writeFile(path, JSON.stringify(prefs))
-    }
-  }
-
-  private async quitApp(app: 'Google Chrome') {
-    const appleScript = `tell application ${appleScriptString(app)} to quit`
-    await this.exec`osascript -e ${appleScript}`.catch(() => {})
-    await this.exec({ timeout: 30_000 })`i=0; while [ "$i" -lt 150 ]; do if ! pgrep -x ${app} >/dev/null; then exit 0; fi; i=$((i + 1)); sleep 0.2; done; exit 1`
-  }
-
-  private async restoreChromeSession(app: 'Google Chrome', session: string[][]) {
-    const urls = session.flat().filter((url) => url.trim().length > 0)
-
-    if (urls.length === 0) {
-      await this.exec`open -a ${app} about:blank`
-      return
-    }
-
-    for (const url of urls) {
-      await this.exec`open -a ${app} ${url}`
-      await this.sleep(100)
-    }
-  }
-
-  private async waitForChromeWindow(app: 'Google Chrome', timeout: number) {
-    const deadline = Date.now() + timeout
-    const script = [
-      `const chrome = Application(${JSON.stringify(app)});`,
-      'chrome.windows().length;',
-    ].join(' ')
-
-    while (Date.now() < deadline) {
-      try {
-        const result = await this.exec`osascript -l JavaScript -e ${script}`
-
-        if (Number(result.stdout.trim()) > 0) {
-          return true
-        }
-      } catch {}
-
-      await this.sleep(200)
-    }
-
-    return false
   }
 
   private async captureScreenRegionImage(region: ScreenBounds) {
@@ -2602,6 +2488,15 @@ final class AutomationServer {
       )
     case "/chrome/evaluate":
       return ["result": try evaluateChromeJavaScript(requiredString(body, "source"))]
+    case "/chrome/javascript-apple-events-allowed":
+      return [
+        "allowed": try chromeJavaScriptFromAppleEventsAllowed(
+          app: requiredString(body, "app")
+        )
+      ]
+    case "/chrome/allow-javascript-apple-events":
+      try allowChromeJavaScriptFromAppleEvents(app: requiredString(body, "app"))
+      return ["ok": true]
     case "/mouse/click":
       click(x: requiredDouble(body, "x"), y: requiredDouble(body, "y"), double: bool(body, "double"))
       return ["ok": true]
@@ -2942,19 +2837,215 @@ final class AutomationServer {
       "end tell",
       "return resultJson",
     ].joined(separator: "\\n")
+    return try executeAppleScript(appleScript).stringValue ?? ""
+  }
+
+  private func chromeJavaScriptFromAppleEventsAllowed(app: String) throws -> Bool {
+    try assertChromeApp(app)
+
+    let appleScript = [
+      "tell application \\"Google Chrome\\"",
+      "if (count of windows) = 0 then return \\"NO_WINDOWS\\"",
+      "set probeResult to execute active tab of front window javascript \\"(() => 1)()\\"",
+      "end tell",
+      "return probeResult",
+    ].joined(separator: "\\n")
+
+    do {
+      _ = try executeAppleScript(appleScript)
+      return true
+    } catch {
+      let message = String(describing: error)
+      if message.contains("Executing JavaScript through AppleScript is turned off") ||
+        message.contains("Invalid index") ||
+        message.contains("NO_WINDOWS") {
+        return false
+      }
+      throw error
+    }
+  }
+
+  private func allowChromeJavaScriptFromAppleEvents(app: String) throws {
+    try assertChromeApp(app)
+
+    if try chromeJavaScriptFromAppleEventsAllowed(app: app) {
+      return
+    }
+
+    let session = captureChromeSession()
+    try quitApp(app)
+    try enableChromeJavaScriptFromAppleEventsPreference()
+
+    _ = try runProcess("/usr/bin/open", ["-a", app, "--args", "--restore-last-session"])
+
+    if !waitForAppWindow(app: app, timeoutMs: 15_000) {
+      try restoreChromeSession(app: app, session: session)
+      _ = waitForAppWindow(app: app, timeoutMs: 15_000)
+    }
+
+    if try chromeJavaScriptFromAppleEventsAllowed(app: app) {
+      return
+    }
+
+    throw ServerError("could not enable JavaScript from Apple Events for \\(app)")
+  }
+
+  private func assertChromeApp(_ app: String) throws {
+    if app != "Google Chrome" {
+      throw ServerError("only Google Chrome is supported for Apple Events JavaScript: \\(app)")
+    }
+  }
+
+  private func captureChromeSession() -> [[String]] {
+    let tabDelimiter = "__MACWRIGHT_TAB__"
+    let windowDelimiter = "__MACWRIGHT_WINDOW__"
+    let appleScript = [
+      "tell application \\"Google Chrome\\"",
+      "set oldDelimiters to AppleScript's text item delimiters",
+      "set windowTexts to {}",
+      "repeat with chromeWindow in windows",
+      "set tabUrls to {}",
+      "repeat with chromeTab in tabs of chromeWindow",
+      "set tabUrl to URL of chromeTab",
+      "if tabUrl is not missing value then set end of tabUrls to tabUrl",
+      "end repeat",
+      "set AppleScript's text item delimiters to \\"\\(tabDelimiter)\\"",
+      "set end of windowTexts to tabUrls as text",
+      "end repeat",
+      "set AppleScript's text item delimiters to \\"\\(windowDelimiter)\\"",
+      "set sessionText to windowTexts as text",
+      "set AppleScript's text item delimiters to oldDelimiters",
+      "return sessionText",
+      "end tell",
+    ].joined(separator: "\\n")
+
+    guard let sessionText = try? executeAppleScript(appleScript).stringValue else {
+      return []
+    }
+
+    if sessionText.trimmingCharacters(in: .whitespacesAndNewlines).isEmpty {
+      return []
+    }
+
+    return sessionText
+      .components(separatedBy: windowDelimiter)
+      .map { windowText in
+        windowText
+          .components(separatedBy: tabDelimiter)
+          .map { $0.trimmingCharacters(in: .whitespacesAndNewlines) }
+          .filter { !$0.isEmpty }
+      }
+      .filter { !$0.isEmpty }
+  }
+
+  private func enableChromeJavaScriptFromAppleEventsPreference() throws {
+    let paths = chromePreferencePaths()
+
+    if paths.isEmpty {
+      throw ServerError("could not find any Google Chrome profile Preferences files")
+    }
+
+    for path in paths {
+      let url = URL(fileURLWithPath: path)
+      let data = try Data(contentsOf: url)
+      var prefs = try JSONSerialization.jsonObject(with: data) as? [String: Any] ?? [:]
+      var browser = prefs["browser"] as? [String: Any] ?? [:]
+      var accountValues = prefs["account_values"] as? [String: Any] ?? [:]
+      var accountBrowser = accountValues["browser"] as? [String: Any] ?? [:]
+
+      browser["allow_javascript_apple_events"] = true
+      accountBrowser["allow_javascript_apple_events"] = true
+      accountValues["browser"] = accountBrowser
+      prefs["browser"] = browser
+      prefs["account_values"] = accountValues
+
+      let backup = "\\(path).pre-allow-js-apple-events-bak-ignoreme-\\(Int(Date().timeIntervalSince1970 * 1000))"
+      try? FileManager.default.copyItem(atPath: path, toPath: backup)
+      let output = try JSONSerialization.data(withJSONObject: prefs)
+      try output.write(to: url)
+    }
+  }
+
+  private func chromePreferencePaths() -> [String] {
+    let chromeDirectory = URL(fileURLWithPath: NSHomeDirectory())
+      .appendingPathComponent("Library/Application Support/Google/Chrome")
+    let entries = (try? FileManager.default.contentsOfDirectory(
+      at: chromeDirectory,
+      includingPropertiesForKeys: [.isDirectoryKey]
+    )) ?? []
+
+    return entries
+      .filter { url in
+        let name = url.lastPathComponent
+        let values = try? url.resourceValues(forKeys: [.isDirectoryKey])
+        return (values?.isDirectory ?? false) && (name == "Default" || name.hasPrefix("Profile "))
+      }
+      .map { $0.appendingPathComponent("Preferences").path }
+      .filter { FileManager.default.fileExists(atPath: $0) }
+  }
+
+  private func quitApp(_ app: String) throws {
+    _ = try? executeAppleScript("tell application \\(appleScriptString(app)) to quit")
+
+    for _ in 0..<150 {
+      if !appIsRunning(app) {
+        return
+      }
+
+      usleep(200_000)
+    }
+
+    throw ServerError("timed out waiting for \\(app) to quit")
+  }
+
+  private func restoreChromeSession(app: String, session: [[String]]) throws {
+    let urls = session.flatMap { $0 }.filter { !$0.trimmingCharacters(in: .whitespacesAndNewlines).isEmpty }
+
+    if urls.isEmpty {
+      _ = try runProcess("/usr/bin/open", ["-a", app, "about:blank"])
+      return
+    }
+
+    for url in urls {
+      _ = try runProcess("/usr/bin/open", ["-a", app, url])
+      usleep(100_000)
+    }
+  }
+
+  private func waitForAppWindow(app: String, timeoutMs: Int) -> Bool {
+    let deadline = Date().addingTimeInterval(Double(timeoutMs) / 1000.0)
+
+    while Date() < deadline {
+      if !windows(app: app).isEmpty {
+        return true
+      }
+
+      usleep(200_000)
+    }
+
+    return false
+  }
+
+  private func appIsRunning(_ app: String) -> Bool {
+    return NSWorkspace.shared.runningApplications.contains {
+      $0.localizedName == app
+    }
+  }
+
+  private func executeAppleScript(_ source: String) throws -> NSAppleEventDescriptor {
     var error: NSDictionary?
 
-    guard let script = NSAppleScript(source: appleScript) else {
-      throw ServerError("could not compile Chrome AppleScript")
+    guard let script = NSAppleScript(source: source) else {
+      throw ServerError("could not compile AppleScript")
     }
 
     let result = script.executeAndReturnError(&error)
 
     if let error {
-      throw ServerError("Chrome AppleScript failed: \\(error)")
+      throw ServerError("AppleScript failed: \\(error)")
     }
 
-    return result.stringValue ?? ""
+    return result
   }
 
   private func click(x: Double, y: Double, double: Bool) {
