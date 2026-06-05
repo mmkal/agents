@@ -6084,6 +6084,10 @@ function centerOfScreenBounds(bounds: ScreenBounds): ScreenCoordinates {
   }
 }
 
+function ocrClickY(bounds: ScreenBounds) {
+  return Math.round(bounds.y + bounds.height * 0.9)
+}
+
 function screenCoordinatesForOcrPosition(
   bounds: ScreenBounds,
   position: OcrClickPosition,
@@ -6092,7 +6096,7 @@ function screenCoordinatesForOcrPosition(
     return {
       relativeTo: 'screen',
       x: Math.round(bounds.x),
-      y: Math.round(bounds.y + bounds.height / 2),
+      y: ocrClickY(bounds),
     }
   }
 
@@ -6100,11 +6104,15 @@ function screenCoordinatesForOcrPosition(
     return {
       relativeTo: 'screen',
       x: Math.round(bounds.x + bounds.width),
-      y: Math.round(bounds.y + bounds.height / 2),
+      y: ocrClickY(bounds),
     }
   }
 
-  return centerOfScreenBounds(bounds)
+  return {
+    relativeTo: 'screen',
+    x: Math.round(bounds.x + bounds.width / 2),
+    y: ocrClickY(bounds),
+  }
 }
 
 function coordsString(coords: ScreenCoordinates | WindowCoordinates) {
