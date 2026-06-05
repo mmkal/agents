@@ -2934,21 +2934,22 @@ final class AutomationServer {
       return
     }
 
-    var searchRange = lineText.startIndex..<lineText.endIndex
-    while let range = lineText.range(
-      of: searchText,
-      options: [.caseInsensitive],
-      range: searchRange
-    ) {
+    let ranges = ocrMatchRanges(
+      in: lineText,
+      searchText: searchText,
+      searchRange: lineText.startIndex..<lineText.endIndex
+    )
+
+    for range in ranges {
       let boxRange: Range<String.Index>
 
       if searchUntilText.isEmpty {
         boxRange = range
-      } else if let untilRange = lineText.range(
-        of: searchUntilText,
-        options: [.caseInsensitive],
-        range: range.upperBound..<lineText.endIndex
-      ) {
+      } else if let untilRange = ocrMatchRanges(
+        in: lineText,
+        searchText: searchUntilText,
+        searchRange: range.upperBound..<lineText.endIndex
+      ).first {
         boxRange = range.lowerBound..<untilRange.upperBound
       } else {
         boxRange = range
@@ -2970,12 +2971,114 @@ final class AutomationServer {
           "text": searchText,
         ])
       }
+    }
+  }
 
-      if range.upperBound == lineText.endIndex {
+  private func ocrMatchRanges(
+    in lineText: String,
+    searchText: String,
+    searchRange: Range<String.Index>
+  ) -> [Range<String.Index>] {
+    var exactRanges: [Range<String.Index>] = []
+    var nextSearchRange = searchRange
+
+    while let range = lineText.range(
+      of: searchText,
+      options: [.caseInsensitive],
+      range: nextSearchRange
+    ) {
+      exactRanges.append(range)
+
+      if range.upperBound == searchRange.upperBound {
         break
       }
-      searchRange = range.upperBound..<lineText.endIndex
+
+      nextSearchRange = range.upperBound..<searchRange.upperBound
     }
+
+    if !exactRanges.isEmpty {
+      return exactRanges
+    }
+
+    var ranges: [Range<String.Index>] = []
+    var start = searchRange.lowerBound
+
+    while start < searchRange.upperBound {
+      if let end = ocrMatchEndIndex(
+        in: lineText,
+        start: start,
+        searchText: searchText,
+        searchEnd: searchRange.upperBound
+      ) {
+        ranges.append(start..<end)
+        start = end
+      } else {
+        start = lineText.index(after: start)
+      }
+    }
+
+    return ranges
+  }
+
+  private func ocrMatchEndIndex(
+    in lineText: String,
+    start: String.Index,
+    searchText: String,
+    searchEnd: String.Index
+  ) -> String.Index? {
+    var lineIndex = start
+    var searchIndex = searchText.startIndex
+
+    while searchIndex < searchText.endIndex {
+      if lineIndex >= searchEnd {
+        return nil
+      }
+
+      if !ocrCharactersEqual(lineText[lineIndex], searchText[searchIndex]) {
+        return nil
+      }
+
+      lineIndex = lineText.index(after: lineIndex)
+      searchIndex = searchText.index(after: searchIndex)
+    }
+
+    return lineIndex
+  }
+
+  private func ocrCharactersEqual(_ left: Character, _ right: Character) -> Bool {
+    let leftText = String(left).lowercased()
+    let rightText = String(right).lowercased()
+
+    if leftText == rightText {
+      return true
+    }
+
+    if ocrCanonicalCharacter(leftText) == ocrCanonicalCharacter(rightText) {
+      return true
+    }
+
+    return ocrDotLikeCharacter(leftText) && ocrDotLikeCharacter(rightText)
+  }
+
+  private func ocrCanonicalCharacter(_ text: String) -> String {
+    switch text {
+    case "0", "о": return "o"
+    case "а": return "a"
+    case "е": return "e"
+    case "і": return "i"
+    case "к": return "k"
+    case "м": return "m"
+    case "р": return "p"
+    case "с": return "c"
+    case "т": return "t"
+    case "у": return "y"
+    case "х": return "x"
+    default: return text
+    }
+  }
+
+  private func ocrDotLikeCharacter(_ text: String) -> Bool {
+    return [".", "-", "–", "—", "·", "•"].contains(text)
   }
 
   private func evaluateChromeJavaScript(_ source: String) throws -> String {
