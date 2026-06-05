@@ -235,6 +235,14 @@ type VideoZoomSpan = VideoSpan & {
 
 type VideoZoomEvent = Omit<VideoZoomSpan, 'end'>
 
+type PeekabooVideoSaveAssets = {
+  captionedPath: string
+  metaPath: string
+  path: string
+  rawPath: string
+  tightPath: string
+}
+
 type AutozoomCamera = {
   height: number
   width: number
@@ -1380,7 +1388,7 @@ class PeekabooWindow implements AsyncDisposable, PeekabooOcrParent {
       windowId: this.windowId,
     })
     await video.start()
-    video.deactivateOnSave(this.parent.useActiveVideo(video))
+    video.onSave(this.parent.useActiveVideo(video))
     this.video = video
     await this.focus()
     return video
@@ -1641,7 +1649,6 @@ class PeekabooVideo implements AsyncDisposable {
   private child?: ReturnType<typeof spawn>
   private deadAirDepth = 0
   private deadAirSpans: VideoSpan[] = []
-  private deactivate?: () => void
   private detachStepListeners?: () => void
   private fastForwardDepth = 0
   private fastForwardSpans: VideoFastForwardSpan[] = []
@@ -1652,6 +1659,7 @@ class PeekabooVideo implements AsyncDisposable {
   private pendingAutozooms: Promise<void>[] = []
   private ready?: Promise<void>
   private rawPath: string
+  private saveCallbacks: Array<(assets: PeekabooVideoSaveAssets) => unknown | Promise<unknown>> = []
   private saved?: Promise<string>
   private sourcePath: string
   private soundtrackPath?: string
@@ -1710,16 +1718,33 @@ class PeekabooVideo implements AsyncDisposable {
 
   async save() {
     if (this.saved) return this.saved;
-    this.deactivate?.()
-    this.deactivate = undefined
-    this.saved = this.stopAndFinalize()
+    this.saved = (async () => {
+      const path = await this.stopAndFinalize()
+      const assets = this.saveAssets(path)
+
+      for (const callback of this.saveCallbacks) {
+        await callback(assets)
+      }
+
+      return path
+    })()
     const path = await this.saved
     console.log(`Video assets: ${path}`)
     return path
   }
 
-  deactivateOnSave(deactivate: () => void) {
-    this.deactivate = deactivate
+  onSave(callback: (assets: PeekabooVideoSaveAssets) => unknown | Promise<unknown>) {
+    this.saveCallbacks.push(callback)
+  }
+
+  private saveAssets(path: string): PeekabooVideoSaveAssets {
+    return {
+      captionedPath: this.captionedPath,
+      metaPath: this.metaPath,
+      path,
+      rawPath: this.rawPath,
+      tightPath: this.tightPath,
+    }
   }
 
   addSoundtrack(path: string) {

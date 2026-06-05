@@ -1,5 +1,5 @@
 import * as fs from 'node:fs/promises'
-import { dirname, join } from 'node:path'
+import { dirname } from 'node:path'
 import { expect, test } from 'vitest'
 import { PeekabooComputer } from './peekaboo-computer.ts'
 
@@ -17,6 +17,7 @@ test('draft an X post', async () => {
   await x.focus()
 
   await using video = await x.startVideo()
+  video.onSave(async (paths) => await fs.copyFile(paths.tightPath, videoPath))
   const dom = x.dom()
 
   await dom.getByTestId('SideNav_NewTweet_Button').click()
@@ -44,10 +45,5 @@ test('draft an X post', async () => {
   await dom.getByTestId('tweetButton').hover({ linger: 1 })
   await dom.getByTestId('tweetButton').annotate('😇', { position: 'above', linger: 1000 })
 
-  const videoAssetsPath = await video.save()
-  await fs.copyFile(join(videoAssetsPath, 'tight.mp4'), videoPath)
-
-  await dom.locator('[aria-label="Remove media"]').click()
-
-  await attachVideo()
+  await video.save()
 })
