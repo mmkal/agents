@@ -47,3 +47,4 @@ The API surface used by `examples/x.test.ts`, `examples/sqlfu.test.ts`, and `exa
 - 2026-06-05: Moved Chrome active-tab JavaScript evaluation into the daemon via `NSAppleScript`, removing another per-call shell process from DOM locator operations.
 - 2026-06-05: Moved smooth pixel scrolling into `/mouse/scroll`, removing the generated `focused-scroll.swift` helper.
 - 2026-06-05: Replaced direct `screencapture` screenshot endpoints with a ScreenCaptureKit-first path plus `screencapture` fallback. The fallback was needed in this session because `SCScreenshotManager.captureImage(in:)` returned no image while the foreground CG window was `loginwindow`.
+- 2026-06-05: Added an early startup error when the daemon sees `loginwindow` as foreground, and made `PeekabooComputer.create()` dispose the daemon/temp directory on startup failures.

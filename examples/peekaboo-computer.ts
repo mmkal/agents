@@ -726,13 +726,31 @@ export class PeekabooComputer
     })
     await fs.mkdir(computer.directory, { recursive: true })
     await fs.mkdir(computer.assetsDirectory, { recursive: true })
-    await computer.automation.start()
 
-    const {data} = await computer.permissions()
-    const missingPermission = data.permissions.find((p: any) => !p.isGranted)
-    if (missingPermission) {
-      throw new Error(`${missingPermission.name} permission is not granted. Enable it for the current terminal/editor in System Settings > Privacy & Security.`)
+    try {
+      await computer.automation.start()
+
+      const {data} = await computer.permissions()
+      const missingPermission = data.permissions.find((p: any) => !p.isGranted)
+      if (missingPermission) {
+        throw new Error(`${missingPermission.name} permission is not granted. Enable it for the current terminal/editor in System Settings > Privacy & Security.`)
+      }
+
+      const initialUserActionState = await computer.readUserActionState()
+      if (initialUserActionState.foregroundApp === 'loginwindow') {
+        throw new Error(
+          [
+            'The macOS UI session appears to be locked or not foreground-interactive.',
+            'The automation daemon sees loginwindow as the foreground app, so mouse and keyboard events will not reach Cursor/Chrome.',
+            'Unlock the Mac and run the demo from an interactive desktop session.',
+          ].join(' '),
+        )
+      }
+    } catch (error) {
+      await computer[Symbol.asyncDispose]().catch(() => {})
+      throw error
     }
+
     return computer
   }
 
