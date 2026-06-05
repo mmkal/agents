@@ -3094,10 +3094,10 @@ final class AutomationServer {
   private func click(x: Double, y: Double, double: Bool) {
     let point = CGPoint(x: x, y: y)
     let count = double ? 2 : 1
-    for _ in 0..<count {
-      postMouse(type: .leftMouseDown, point: point)
+    for index in 1...count {
+      postMouse(type: .leftMouseDown, point: point, clickState: index)
       usleep(40_000)
-      postMouse(type: .leftMouseUp, point: point)
+      postMouse(type: .leftMouseUp, point: point, clickState: index)
       usleep(80_000)
     }
   }
@@ -3227,11 +3227,17 @@ final class AutomationServer {
     sayProcess = process
   }
 
-  private func postMouse(type: CGEventType, point: CGPoint) {
+  private func postMouse(type: CGEventType, point: CGPoint, clickState: Int = 1) {
     CGWarpMouseCursorPosition(point)
     CGAssociateMouseAndMouseCursorPosition(1)
-    CGEvent(mouseEventSource: CGEventSource(stateID: .hidSystemState), mouseType: type, mouseCursorPosition: point, mouseButton: .left)?
-      .post(tap: .cghidEventTap)
+    let event = CGEvent(
+      mouseEventSource: CGEventSource(stateID: .hidSystemState),
+      mouseType: type,
+      mouseCursorPosition: point,
+      mouseButton: .left
+    )
+    event?.setIntegerValueField(.mouseEventClickState, value: Int64(clickState))
+    event?.post(tap: .cghidEventTap)
   }
 
   private func postKey(code: CGKeyCode, flags: CGEventFlags, down: Bool) {
@@ -4888,15 +4894,11 @@ async function listAutomationWindows(
   return payload.windows
 }
 
-function isExternalWindowCandidate(app: string, window: AutomationWindowInfo) {
+function isExternalWindowCandidate(_app: string, window: AutomationWindowInfo) {
   const title = window.window_title.trim()
 
   if (title.length === 0) {
     return false
-  }
-
-  if (app.toLowerCase().includes('chrome')) {
-    return title.includes(' - Google Chrome')
   }
 
   return true
