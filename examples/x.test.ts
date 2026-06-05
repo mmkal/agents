@@ -8,14 +8,12 @@ test('draft an X post', async () => {
   await using computer = await Macwright.create(expect.getState().currentTestName)
   await fs.mkdir(dirname(videoPath), { recursive: true })
 
-  await fs.access(videoPath).catch(async () => {
-    await computer.exec({ timeout: 30_000 })`ffmpeg -y -hide_banner -loglevel error -f lavfi -i color=c=black:s=1280x720:d=1 -an -c:v libx264 -pix_fmt yuv420p ${videoPath}`
-  })
   await computer.allowJavaScriptFromAppleEvents('Google Chrome')
 
   const x = await computer.open('Google Chrome', 'https://x.com/mmkalmmkal')
 
   await using video = await x.startVideo()
+  video.autozoom(['type'])
   video.onSave(async (paths) => await fs.copyFile(paths.tightPath, videoPath))
   
   const dom = x.dom()

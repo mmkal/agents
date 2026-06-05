@@ -252,7 +252,9 @@ type VideoZoomSpan = VideoSpan & {
   y: number
 }
 
-type VideoZoomEvent = Omit<VideoZoomSpan, 'end'>
+type VideoZoomEvent = Omit<VideoZoomSpan, 'end'> & {
+  end?: number
+}
 
 type PeekabooVideoSaveAssets = {
   captionedPath: string
@@ -297,6 +299,9 @@ type AutozoomCameraSegment = VideoSpan & {
 type TightVideoSegment = VideoSpan & {
   speed: number
 }
+
+const AUTOZOOM_IN_TRANSITION_MS = 280
+const AUTOZOOM_OUT_TRANSITION_MS = 280
 
 type PeekabooBounds = {
   height: number
@@ -1728,7 +1733,10 @@ class PeekabooWindow implements AsyncDisposable, PeekabooOcrParent {
       },
     )
 
-    await this.recordTypedAutozoom(text, startedAt)
+    await this.recordTypedAutozoom(text, {
+      end: this.video?.timestamp(),
+      start: startedAt,
+    })
   }
 
   async paste(text: string, options: { noAutoFocus?: boolean } = {}) {
@@ -1753,7 +1761,10 @@ class PeekabooWindow implements AsyncDisposable, PeekabooOcrParent {
       },
     )
 
-    await this.recordTypedAutozoom(text, startedAt)
+    await this.recordTypedAutozoom(text, {
+      end: this.video?.timestamp(),
+      start: startedAt,
+    })
   }
 
   toScreenCoordinates(coords: ScreenCoordinates | WindowCoordinates): ScreenCoordinates {
@@ -1859,7 +1870,12 @@ class PeekabooWindow implements AsyncDisposable, PeekabooOcrParent {
     )
   }
 
-  private async recordTypedAutozoom(text: string, start: number | undefined) {
+  private async recordTypedAutozoom(
+    text: string,
+    span: { end: number | undefined; start: number | undefined },
+  ) {
+    const { end, start } = span
+
     if (!this.video?.autozoomEnabled('type') || start === undefined) {
       return
     }
@@ -1873,14 +1889,14 @@ class PeekabooWindow implements AsyncDisposable, PeekabooOcrParent {
     }
 
     this.video.queueAutozoom(
-      this.recordTypedAutozoomFromImage(text, imagePath, start),
+      this.recordTypedAutozoomFromImage(text, imagePath, { end, start }),
     )
   }
 
   private async recordTypedAutozoomFromImage(
     text: string,
     imagePath: string,
-    start: number,
+    span: { end: number | undefined; start: number },
   ) {
     const bounds = await this.findTypedTextWindowBoundsInImage(
       text,
@@ -1894,7 +1910,7 @@ class PeekabooWindow implements AsyncDisposable, PeekabooOcrParent {
     this.video?.recordAutozoom(
       'type',
       expandWindowBounds(bounds, 72, this.windowBounds),
-      { start },
+      span,
     )
   }
 
@@ -2084,7 +2100,7 @@ class PeekabooVideo implements AsyncDisposable {
   recordAutozoom(
     trigger: AutozoomTrigger,
     bounds: WindowBounds,
-    options: { start?: number } = {},
+    options: { end?: number; start?: number } = {},
   ) {
     if (!this.autozoomEnabled(trigger)) {
       return
@@ -2099,6 +2115,7 @@ class PeekabooVideo implements AsyncDisposable {
     const zoomBounds = clampWindowBounds(bounds, this.videoBounds)
     this.zoomEvents.push({
       ...zoomBounds,
+      end: options.end,
       start,
       trigger,
     })
@@ -2399,17 +2416,29 @@ class PeekabooVideo implements AsyncDisposable {
   private async writeTightVideo() {
     const deadAir = mergeVideoSpans(this.deadAirSpans)
     const fastForward = normalizeVideoFastForwardSpans(this.fastForwardSpans)
-
-    if (deadAir.length === 0 && fastForward.length === 0) {
-      await fs.copyFile(this.captionedPath, this.tightPath)
-      return
-    }
-
-    const videoFilter = tightVideoFilter({
+    const finalEnd = this.videoEndedAt || this.timestamp() || 0
+    const segments = tightVideoSegments({
       deadAir,
       fastForward,
-      finalEnd: this.videoEndedAt || this.timestamp() || 0,
+      finalEnd,
     })
+    const needsTightFilter = tightVideoSegmentsNeedFilter(segments, finalEnd)
+    const tightFilter = needsTightFilter
+      ? tightVideoFilter({
+        deadAir,
+        fastForward,
+        finalEnd,
+      })
+      : undefined
+    const zoomFilter = autozoomVideoFilter({
+      finalEnd: tightVideoTimelineDuration(segments),
+      inputLabel: tightFilter?.kind === 'complex'
+        ? `[${tightFilter.outputLabel}]`
+        : '[0:v]',
+      videoBounds: this.videoBounds,
+      zooms: projectVideoZoomSpans(this.videoZoomSpans(), segments),
+    })
+    const videoFilter = combineVideoFilters(tightFilter, zoomFilter)
 
     if (!videoFilter) {
       await fs.copyFile(this.captionedPath, this.tightPath)
@@ -2457,17 +2486,6 @@ class PeekabooVideo implements AsyncDisposable {
   }
 
   private captionedVideoFilter(): VideoFilter | undefined {
-    const zoomFilter = autozoomVideoFilter({
-      assPath: this.stepSpans.length === 0 ? undefined : this.assPath,
-      finalEnd: this.videoEndedAt || this.timestamp() || 0,
-      videoBounds: this.videoBounds,
-      zooms: this.videoZoomSpans(),
-    })
-
-    if (zoomFilter) {
-      return zoomFilter
-    }
-
     if (this.stepSpans.length > 0) {
       return {
         kind: 'simple',
@@ -5446,6 +5464,24 @@ function tightVideoFilter(options: {
   }
 }
 
+function combineVideoFilters(
+  first: VideoFilter | undefined,
+  second: VideoFilter | undefined,
+): VideoFilter | undefined {
+  if (!first) return second
+  if (!second) return first
+
+  if (first.kind !== 'complex' || second.kind !== 'complex') {
+    throw new Error('Only complex video filters can be combined')
+  }
+
+  return {
+    kind: 'complex',
+    outputLabel: second.outputLabel,
+    value: `${first.value};${second.value}`,
+  }
+}
+
 function tightVideoSegments(options: {
   deadAir: VideoSpan[]
   fastForward: VideoFastForwardSpan[]
@@ -5516,6 +5552,65 @@ function tightVideoSegments(options: {
   return segments
 }
 
+function tightVideoTimelineDuration(segments: TightVideoSegment[]) {
+  return Math.round(
+    segments.reduce(
+      (duration, segment) =>
+        duration + (segment.end - segment.start) / segment.speed,
+      0,
+    ),
+  )
+}
+
+function projectVideoZoomSpans(
+  zooms: VideoZoomSpan[],
+  segments: TightVideoSegment[],
+): VideoZoomSpan[] {
+  return zooms
+    .map((zoom) => {
+      const start = projectVideoTime(zoom.start, segments)
+      const end = projectVideoTime(zoom.end, segments)
+
+      if (start === undefined || end === undefined || end <= start) {
+        return undefined
+      }
+
+      return {
+        ...zoom,
+        end,
+        start,
+      }
+    })
+    .filter((zoom): zoom is VideoZoomSpan => Boolean(zoom))
+}
+
+function projectVideoTime(
+  time: number,
+  segments: TightVideoSegment[],
+): number | undefined {
+  let outputTime = 0
+
+  for (const segment of segments) {
+    if (time < segment.start) {
+      return outputTime
+    }
+
+    const segmentDuration = (segment.end - segment.start) / segment.speed
+
+    if (time <= segment.end) {
+      return Math.round(outputTime + (time - segment.start) / segment.speed)
+    }
+
+    outputTime += segmentDuration
+  }
+
+  if (segments.length === 0) {
+    return undefined
+  }
+
+  return Math.round(outputTime)
+}
+
 function tightVideoSegmentsNeedFilter(
   segments: TightVideoSegment[],
   finalEnd: number,
@@ -5564,8 +5659,8 @@ function videoSpanDurationWithoutDeadAir(
 }
 
 function autozoomVideoFilter(options: {
-  assPath?: string
   finalEnd: number
+  inputLabel: string
   videoBounds: { height: number; width: number }
   zooms: VideoZoomSpan[]
 }): VideoFilter | undefined {
@@ -5580,19 +5675,27 @@ function autozoomVideoFilter(options: {
   )
   const filters: string[] = []
   const labels: string[] = []
+  const inputLabels = segments.map((_, index) => `azsrc${index}`)
+
+  if (segments.length > 1) {
+    filters.push(
+      `${options.inputLabel}split=${segments.length}${inputLabels.map((label) => `[${label}]`).join('')}`,
+    )
+  }
 
   for (let index = 0; index < segments.length; index += 1) {
     const segment = segments[index]
     const label = `az${index}`
     labels.push(`[${label}]`)
 
-    const trim = `[0:v]trim=start=${formatSeconds(segment.start)}:end=${formatSeconds(segment.end)},setpts=PTS-STARTPTS`
-    const transitionSeconds = formatSeconds(
-      Math.min(280, segment.end - segment.start),
-    )
+    const inputLabel = segments.length > 1
+      ? `[${inputLabels[index]}]`
+      : options.inputLabel
+    const trim = `${inputLabel}trim=start=${formatSeconds(segment.start)}:end=${formatSeconds(segment.end)},setpts=PTS-STARTPTS`
+    const transitionSeconds = formatSeconds(autozoomTransitionDuration(segment))
 
     filters.push(
-      `${trim},${autozoomCropFilter(segment, transitionSeconds)},scale=${options.videoBounds.width}:${options.videoBounds.height}[${label}]`,
+      `${trim},${autozoomCropFilter(segment, transitionSeconds, options.videoBounds)}[${label}]`,
     )
   }
 
@@ -5600,11 +5703,6 @@ function autozoomVideoFilter(options: {
 
   if (labels.length > 1) {
     filters.push(`${labels.join('')}concat=n=${labels.length}:v=1:a=0[${outputLabel}]`)
-  }
-
-  if (options.assPath) {
-    filters.push(`[${outputLabel}]ass=${escapeFfmpegFilterValue(options.assPath)}[azout]`)
-    outputLabel = 'azout'
   }
 
   return {
@@ -5661,14 +5759,40 @@ function autozoomCameraSegments(
 function autozoomCropFilter(
   segment: AutozoomCameraSegment,
   transitionSeconds: string,
+  videoBounds: { height: number; width: number },
 ) {
   const ease = autozoomEaseExpression(transitionSeconds)
-  const width = autozoomInterpolateExpression(segment.from.width, segment.to.width, ease)
-  const height = autozoomInterpolateExpression(segment.from.height, segment.to.height, ease)
   const x = autozoomInterpolateExpression(segment.from.x, segment.to.x, ease)
   const y = autozoomInterpolateExpression(segment.from.y, segment.to.y, ease)
+  const zoom = autozoomInterpolateExpression(
+    videoBounds.width / segment.from.width,
+    videoBounds.width / segment.to.width,
+    ease,
+  )
+  const scaledWidth = `trunc(iw*(${zoom})/2)*2`
+  const scaledHeight = `trunc(ih*(${zoom})/2)*2`
+  const cropX = `min(max((${x})*(${zoom}),0),iw-ow)`
+  const cropY = `min(max((${y})*(${zoom}),0),ih-oh)`
 
-  return `crop=w='${width}':h='${height}':x='${x}':y='${y}'`
+  return `scale=w='${scaledWidth}':h='${scaledHeight}':eval=frame,crop=w=${videoBounds.width}:h=${videoBounds.height}:x='${cropX}':y='${cropY}'`
+}
+
+function autozoomTransitionDuration(segment: AutozoomCameraSegment) {
+  return Math.min(
+    autozoomCamerasEqual(segment.to, autozoomFullFrame(segment.to))
+      ? AUTOZOOM_OUT_TRANSITION_MS
+      : AUTOZOOM_IN_TRANSITION_MS,
+    segment.end - segment.start,
+  )
+}
+
+function autozoomCamerasEqual(left: AutozoomCamera, right: AutozoomCamera) {
+  return (
+    left.height === right.height &&
+    left.width === right.width &&
+    left.x === right.x &&
+    left.y === right.y
+  )
 }
 
 function autozoomEaseExpression(transitionSeconds: string) {
@@ -5801,6 +5925,7 @@ function normalizeVideoZoomEvents(
     const nextEvent = sorted[index + 1]
     const nextBreakpoint = breakpoints.find((breakpoint) => breakpoint > event.start)
     const end = Math.min(
+      event.end || finalEnd,
       nextEvent ? nextEvent.start : finalEnd,
       nextBreakpoint || finalEnd,
       finalEnd,
@@ -5820,8 +5945,12 @@ function normalizeVideoZoomEvents(
 }
 
 export const peekabooComputerVideoTestInternals = {
+  autozoomVideoFilter,
   normalizeVideoFastForwardSpans,
+  normalizeVideoZoomEvents,
+  projectVideoZoomSpans,
   tightVideoSegments,
+  tightVideoTimelineDuration,
 }
 
 function autozoomWords(text: string) {

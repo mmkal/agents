@@ -16,10 +16,10 @@ const execFileAsync = promisify(execFile)
 
 test('peekaboo computer helper-backed examples do not call the peekaboo CLI', async () => {
   const files = [
-    'examples/peekaboo-computer.ts',
+    'examples/macwright.ts',
     ...(
       await Array.fromAsync(fs.glob('examples/**/*.ts'))
-    ).filter((path) => path !== 'examples/peekaboo-computer.ts'),
+    ).filter((path) => path !== 'examples/macwright.ts'),
   ]
   const checkedFiles: string[] = []
   const cliCommandPattern = /\bpeekaboo\s+(?:app|clipboard|click|hotkey|image|open|permissions|press|see|sleep|type|window)\b/g
@@ -27,7 +27,7 @@ test('peekaboo computer helper-backed examples do not call the peekaboo CLI', as
   for (const path of files) {
     const source = await fs.readFile(path, 'utf8')
 
-    if (path !== 'examples/peekaboo-computer.ts' && !source.includes('./peekaboo-computer')) {
+    if (path !== 'examples/macwright.ts' && !source.includes('./macwright')) {
       continue
     }
 
@@ -40,7 +40,7 @@ test('peekaboo computer helper-backed examples do not call the peekaboo CLI', as
 
   expect(checkedFiles).toEqual(
     expect.arrayContaining([
-      'examples/peekaboo-computer.ts',
+      'examples/macwright.ts',
       'examples/sqlfu.test.ts',
       'examples/x.test.ts',
     ]),
@@ -70,6 +70,102 @@ test('video fast-forward metadata preserves user intent', () => {
     { start: 10, end: 20, maxDuration: '2s' },
     { start: 30, end: 40, speed: '2.5x' },
   ])
+})
+
+test('type autozoom can end before the final frame', () => {
+  const spans = peekabooComputerVideoTestInternals.normalizeVideoZoomEvents(
+    [
+      {
+        height: 170,
+        width: 360,
+        x: 556,
+        y: 176,
+        start: 1_500,
+        end: 4_000,
+        trigger: 'type',
+      },
+    ],
+    [1_500],
+    20_000,
+  )
+
+  expect(spans).toEqual([
+    {
+      height: 170,
+      width: 360,
+      x: 556,
+      y: 176,
+      start: 1_500,
+      end: 4_000,
+      trigger: 'type',
+    },
+  ])
+})
+
+test('type autozoom is projected onto the tightened video timeline', () => {
+  const segments = peekabooComputerVideoTestInternals.tightVideoSegments({
+    deadAir: [{ start: 4_000, end: 10_000 }],
+    fastForward: [],
+    finalEnd: 12_000,
+  })
+  const zooms = peekabooComputerVideoTestInternals.projectVideoZoomSpans(
+    [
+      {
+        height: 170,
+        width: 360,
+        x: 556,
+        y: 176,
+        start: 1_500,
+        end: 4_000,
+        trigger: 'type',
+      },
+    ],
+    segments,
+  )
+
+  expect({
+    duration: peekabooComputerVideoTestInternals.tightVideoTimelineDuration(segments),
+    zooms,
+  }).toMatchObject({
+    duration: 6_000,
+    zooms: [
+      {
+        height: 170,
+        width: 360,
+        x: 556,
+        y: 176,
+        start: 1_500,
+        end: 4_000,
+        trigger: 'type',
+      },
+    ],
+  })
+})
+
+test('autozoom animates scale per frame', () => {
+  const filter = peekabooComputerVideoTestInternals.autozoomVideoFilter({
+    finalEnd: 5_000,
+    inputLabel: '[0:v]',
+    videoBounds: { height: 800, width: 1_200 },
+    zooms: [
+      {
+        height: 170,
+        width: 360,
+        x: 556,
+        y: 176,
+        start: 1_500,
+        end: 4_000,
+        trigger: 'type',
+      },
+    ],
+  })
+
+  expect(filter).toMatchObject({
+    kind: 'complex',
+    value: expect.stringContaining('scale='),
+  })
+  expect(filter?.value).toContain('eval=frame')
+  expect(filter?.value).toContain('crop=w=1200:h=800')
 })
 
 test.skipIf(process.platform !== 'darwin')('mac automation daemon Swift source compiles', async () => {
