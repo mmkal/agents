@@ -10,7 +10,7 @@ import { expect, test } from 'vitest'
 import {
   macAutomationServerSwiftSource,
   peekabooComputerVideoTestInternals,
-} from '../examples/peekaboo-computer.ts'
+} from '../examples/macwright.ts'
 
 const execFileAsync = promisify(execFile)
 

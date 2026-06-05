@@ -1,11 +1,11 @@
 import * as fs from 'node:fs/promises'
 import { dirname } from 'node:path'
 import { expect, test } from 'vitest'
-import { PeekabooComputer } from './peekaboo-computer.ts'
+import { Macwright } from './macwright.ts'
 
 test('draft an X post', async () => {
   const videoPath = '/tmp/x/post.mp4'
-  await using computer = await PeekabooComputer.create(expect.getState())
+  await using computer = await Macwright.create(expect.getState().currentTestName)
   await fs.mkdir(dirname(videoPath), { recursive: true })
 
   await fs.access(videoPath).catch(async () => {
@@ -35,5 +35,4 @@ test('draft an X post', async () => {
   })
 
   await dom.getByTestId('tweetButton').annotate('😇', { position: 'above', linger: 1000 })
-
 })

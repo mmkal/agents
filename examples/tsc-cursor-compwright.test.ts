@@ -1,10 +1,10 @@
 import dedent from 'dedent'
 import { expect, test } from 'vitest'
 import * as tf from 'type-fest'
-import { PeekabooComputer } from './peekaboo-computer.ts'
+import { Macwright } from './macwright.ts'
 
 test('tsc in Cursor', async () => {
-  await using computer = await PeekabooComputer.create(expect.getState())
+  await using computer = await Macwright.create(expect.getState().currentTestName)
 
   await computer.exec`rm -rf ${computer.directory} && mkdir -p ${computer.directory}`
   await computer.writeJsonFile('tsconfig.json', {

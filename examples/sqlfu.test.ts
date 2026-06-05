@@ -1,11 +1,11 @@
 import dedent from 'dedent'
 import { expect, test } from 'vitest'
-import { PeekabooComputer } from './peekaboo-computer.ts'
+import { Macwright } from './macwright.ts'
 
 const sqlfuPackageRoot = '/Users/mmkal/src/sqlfu/packages/sqlfu'
 
 test('sqlfu demo', async () => {
-  await using computer = await PeekabooComputer.create(expect.getState())
+  await using computer = await Macwright.create(expect.getState().currentTestName)
   computer.on('step:start', ({ title }) => {
     void computer.say(title.replace('tsc', 'T.S.C')).catch(() => {})
   })

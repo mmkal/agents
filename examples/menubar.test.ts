@@ -1,8 +1,8 @@
 import { expect, test } from 'vitest'
-import { PeekabooComputer } from './peekaboo-computer.ts'
+import { Macwright } from './macwright.ts'
 
 test('navigate a macOS menu bar path', async () => {
-  await using computer = await PeekabooComputer.create(expect.getState())
+  await using computer = await Macwright.create(expect.getState().currentTestName)
 
   await computer.writeFile('menubar.ts', '')
   await using ide = await computer.open('Cursor', '.')

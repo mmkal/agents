@@ -470,19 +470,14 @@ class MacAutomationServer {
     await fs.writeFile(sourcePath, macAutomationServerSwiftSource)
     const binaryPath = await this.compiledBinaryPath(sourcePath)
 
-    const child = spawn(binaryPath, [], {
-      stdio: ['ignore', 'pipe', 'pipe'],
-    })
+    const child = spawn(binaryPath, [], { stdio: ['ignore', 'pipe', 'pipe'] })
     this.child = child
     this.port = await this.waitForPort(child)
   }
 
   async stop() {
     const child = this.child
-
-    if (!child) {
-      return
-    }
+    if (!child) return
 
     this.child = undefined
 
@@ -768,7 +763,7 @@ class MacAutomationServer {
   }
 }
 
-export class PeekabooComputer
+export class Macwright
   extends EventEmitter
   implements AsyncDisposable, PeekabooOcrParent
 {
@@ -788,16 +783,12 @@ export class PeekabooComputer
   private screenCaptureIndex = 0
   private stepId = 0
 
-  static async create(testState: {currentTestName?: string}) {
-    const slug = slugify(testState.currentTestName || 'compwright-demo')
+  static async create(slug = 'macwright-demo') {
+    slug = slugify(slug)
     const parent = mkdtempSync(join(tmpdir(), `${slug}-`))
     const directory = join(parent, slug)
     const assetsDirectory = join(parent, 'assets')
-    const computer = new PeekabooComputer({
-      assetsDirectory,
-      directory,
-      parentDirectory: parent,
-    })
+    const computer = new Macwright({ assetsDirectory, directory, parentDirectory: parent })
     await fs.mkdir(computer.directory, { recursive: true })
     await fs.mkdir(computer.assetsDirectory, { recursive: true })
 
