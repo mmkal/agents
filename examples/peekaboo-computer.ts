@@ -393,6 +393,10 @@ type PeekabooUserActionGuardParent = {
   deadAir<T>(action: () => Promise<T>): Promise<T>
 }
 
+type PeekabooWindowParent = PeekabooCommandParent & {
+  useActiveVideo(video: PeekabooVideo): () => void
+}
+
 export class PeekabooComputer
   extends EventEmitter
   implements AsyncDisposable, PeekabooOcrParent
@@ -401,6 +405,7 @@ export class PeekabooComputer
   directory: string
   exec: ComputerExec
   parentDirectory: string
+  private activeVideo?: PeekabooVideo
   private userActionGuard: PeekabooUserActionGuard
   private screenBounds?: ScreenBounds
   private screenCaptureIndex = 0
@@ -731,7 +736,21 @@ export class PeekabooComputer
   async focus() {}
 
   async deadAir<T>(action: () => Promise<T>) {
-    return await action()
+    if (!this.activeVideo) {
+      return await action()
+    }
+
+    return await this.activeVideo.deadAir(action)
+  }
+
+  useActiveVideo(video: PeekabooVideo) {
+    this.activeVideo = video
+
+    return () => {
+      if (this.activeVideo === video) {
+        this.activeVideo = undefined
+      }
+    }
   }
 
   async press(keys: string) {
@@ -985,7 +1004,7 @@ class PeekabooWindow implements AsyncDisposable, PeekabooOcrParent {
   private directory: string
   private userActionGuard: PeekabooUserActionGuard
   private ocrCaptureIndex = 0
-  private parent: PeekabooCommandParent
+  private parent: PeekabooWindowParent
   private seeCaptureIndex = 0
   private video?: PeekabooVideo
   private windowBounds: PeekabooBounds
@@ -997,7 +1016,7 @@ class PeekabooWindow implements AsyncDisposable, PeekabooOcrParent {
     clipboardSlot: string
     closeOnDispose: boolean
     directory: string
-    parent: PeekabooCommandParent
+    parent: PeekabooWindowParent
     windowBounds: PeekabooBounds
     windowId: number
   }) {
@@ -1183,53 +1202,55 @@ class PeekabooWindow implements AsyncDisposable, PeekabooOcrParent {
     sourceOrArgs: string | unknown,
     fn?: (args: any) => Result,
   ): Promise<Awaited<Result>> {
-    if (!this.app.toLowerCase().includes('chrome')) {
-      throw new Error(`Chrome JavaScript execution requires a Google Chrome window. Window app: ${this.app}`)
-    }
+    return await this.deadAir(async () => {
+      if (!this.app.toLowerCase().includes('chrome')) {
+        throw new Error(`Chrome JavaScript execution requires a Google Chrome window. Window app: ${this.app}`)
+      }
 
-    await this.focus()
+      await this.focus()
 
-    const source = typeof sourceOrArgs === 'string' && !fn
-      ? sourceOrArgs
-      : [
-          '(() => {',
-          `const args = ${JSON.stringify(sourceOrArgs)};`,
-          `const fn = (${String(fn)});`,
-          'return fn(args);',
-          '})()',
-        ].join(' ')
-    const encodedSource = encodeURIComponent(source)
-    const browserSource = [
-      '(() => {',
-      'try {',
-      `const source = decodeURIComponent(${JSON.stringify(encodedSource)});`,
-      'const value = eval(source);',
-      'return JSON.stringify({ ok: true, value });',
-      '} catch (error) {',
-      'return JSON.stringify({ ok: false, error: String(error), stack: error && error.stack });',
-      '}',
-      '})()',
-    ].join(' ')
-    const appleScript = [
-      'tell application "Google Chrome"',
-      `set resultJson to execute active tab of front window javascript ${appleScriptString(browserSource)}`,
-      'end tell',
-      'return resultJson',
-    ]
-    const result = await this.exec`osascript ${raw(appleScript.map((line) => `-e ${shellQuote(line)}`).join(' '))}`
-    const payload = JSON.parse(result.stdout.trim())
+      const source = typeof sourceOrArgs === 'string' && !fn
+        ? sourceOrArgs
+        : [
+            '(() => {',
+            `const args = ${JSON.stringify(sourceOrArgs)};`,
+            `const fn = (${String(fn)});`,
+            'return fn(args);',
+            '})()',
+          ].join(' ')
+      const encodedSource = encodeURIComponent(source)
+      const browserSource = [
+        '(() => {',
+        'try {',
+        `const source = decodeURIComponent(${JSON.stringify(encodedSource)});`,
+        'const value = eval(source);',
+        'return JSON.stringify({ ok: true, value });',
+        '} catch (error) {',
+        'return JSON.stringify({ ok: false, error: String(error), stack: error && error.stack });',
+        '}',
+        '})()',
+      ].join(' ')
+      const appleScript = [
+        'tell application "Google Chrome"',
+        `set resultJson to execute active tab of front window javascript ${appleScriptString(browserSource)}`,
+        'end tell',
+        'return resultJson',
+      ]
+      const result = await this.exec`osascript ${raw(appleScript.map((line) => `-e ${shellQuote(line)}`).join(' '))}`
+      const payload = JSON.parse(result.stdout.trim())
 
-    if (!payload.ok) {
-      throw new Error(
-        [
-          'Chrome JavaScript execution failed.',
-          payload.error,
-          payload.stack,
-        ].filter(Boolean).join('\n'),
-      )
-    }
+      if (!payload.ok) {
+        throw new Error(
+          [
+            'Chrome JavaScript execution failed.',
+            payload.error,
+            payload.stack,
+          ].filter(Boolean).join('\n'),
+        )
+      }
 
-    return payload.value as Awaited<Result>
+      return payload.value as Awaited<Result>
+    })
   }
 
   async annotateScreenText(
@@ -1359,6 +1380,7 @@ class PeekabooWindow implements AsyncDisposable, PeekabooOcrParent {
       windowId: this.windowId,
     })
     await video.start()
+    video.deactivateOnSave(this.parent.useActiveVideo(video))
     this.video = video
     await this.focus()
     return video
@@ -1619,6 +1641,7 @@ class PeekabooVideo implements AsyncDisposable {
   private child?: ReturnType<typeof spawn>
   private deadAirDepth = 0
   private deadAirSpans: VideoSpan[] = []
+  private deactivate?: () => void
   private detachStepListeners?: () => void
   private fastForwardDepth = 0
   private fastForwardSpans: VideoFastForwardSpan[] = []
@@ -1687,10 +1710,16 @@ class PeekabooVideo implements AsyncDisposable {
 
   async save() {
     if (this.saved) return this.saved;
+    this.deactivate?.()
+    this.deactivate = undefined
     this.saved = this.stopAndFinalize()
     const path = await this.saved
     console.log(`Video assets: ${path}`)
     return path
+  }
+
+  deactivateOnSave(deactivate: () => void) {
+    this.deactivate = deactivate
   }
 
   addSoundtrack(path: string) {
@@ -1755,7 +1784,7 @@ class PeekabooVideo implements AsyncDisposable {
   }
 
   async deadAir<T>(action: () => Promise<T>) {
-    if (!this.startedAt || this.deadAirDepth > 0) {
+    if (!this.startedAt || this.saved || this.deadAirDepth > 0) {
       return await action()
     }
 
@@ -2925,7 +2954,10 @@ function domElementMatchesLocatorOptions(element, options) {
       await this.parent.assertUserActionStill('during dom.waitFor')
 
       try {
-        return await this.resolveInfo()
+        const start = Date.now()
+        const info = await this.resolveInfo()
+        console.log('resolveInfo took', Date.now() - start, this.selector, this.options)
+        return info
       } catch (error) {
         lastError = error
 

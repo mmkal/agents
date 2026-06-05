@@ -25,24 +25,24 @@ test('draft an X post', async () => {
   await dom.getByTestId('SideNav_NewTweet_Button').click()
   await dom.getByTestId('tweetTextarea_0').type(postDraft)
   
-  const uploadVideo = async () => {
+  const attachVideo = async () => {
     await dom.getByLabel('Add photos or video').click()
     await computer.ocr('post.mp4').dblclick().catch(async () => {
-      await x.hotkey('cmd,shift,g', { noAutoFocus: true })
-      await x.hotkey('cmd,a', { noAutoFocus: true })
-      await x.type(uploadDirectory, { delay: -1, noAutoFocus: true })
-      await x.press('return', { noAutoFocus: true })
+      await x.hotkey('cmd,shift,g')
+      await x.hotkey('cmd,a')
+      await x.type(uploadDirectory)
+      await x.press('return')
       await computer.ocr('post.mp4').dblclick()
     })
   }
 
-  await uploadVideo()
+  await attachVideo()
 
   await video.fastForward({ maxDuration: '2s' }, async () => {
     await dom.locator('[role="status"]', { hasText: 'Uploaded (100%)' }).waitFor({timeout: 10_000})
   })
 
-  await dom.getByTestId('tweetButton').hover({ linger: 1000 })
+  await dom.getByTestId('tweetButton').hover({ linger: 1 })
   await dom.getByTestId('tweetButton').annotate('😇', { position: 'above', linger: 1000 })
 
   const videoAssetsPath = await video.save()
@@ -50,5 +50,5 @@ test('draft an X post', async () => {
 
   await dom.locator('[aria-label="Remove media"]').click()
 
-  await uploadVideo()
+  await attachVideo()
 })
