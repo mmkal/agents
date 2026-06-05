@@ -86,6 +86,17 @@ type UserActionChangedEvent = {
   location: string
 }
 
+type MacwrightStatusState = 'failed' | 'paused' | 'playing' | 'succeeded'
+
+type MacwrightStatusAction = 'continue' | 'fail'
+
+type MacwrightStatusUpdate = {
+  detail?: string
+  path?: string
+  state: MacwrightStatusState
+  title?: string
+}
+
 type OcrOptions = {
   after?: string
   before?: string
@@ -399,6 +410,8 @@ type PeekabooCommandParent = {
   readUserActionState(): Promise<UserActionState>
   restoreUserActionState(state: UserActionState): Promise<void>
   setActionMouseMovement(options: ActionMouseMovementOptions): void
+  statusCheckpoint(): Promise<MacwrightStatusAction | undefined>
+  waitForUserActionChanged(event: UserActionChangedEvent): Promise<MacwrightStatusAction>
   sleep(ms: number): Promise<void>
 }
 
@@ -450,6 +463,7 @@ type PeekabooUserActionGuardParent = {
   deadAir<T>(action: () => Promise<T>): Promise<T>
   readUserActionState(): Promise<UserActionState>
   restoreUserActionState(state: UserActionState): Promise<void>
+  waitForUserActionChanged(event: UserActionChangedEvent): Promise<MacwrightStatusAction>
 }
 
 type PeekabooWindowParent = PeekabooCommandParent & {
@@ -506,6 +520,25 @@ class MacAutomationServer {
     })
 
     await Promise.race([exited, timeout])
+  }
+
+  async finishStatusAndDetach(update: MacwrightStatusUpdate) {
+    const child = this.child
+
+    if (!child) {
+      return
+    }
+
+    await this.post('/status/finish', {
+      autoDismissMs: 120_000,
+      ...update,
+    }).catch(() => {})
+
+    child.stdout?.destroy()
+    child.stderr?.destroy()
+    child.unref()
+    this.child = undefined
+    this.port = undefined
   }
 
   async permissions() {
@@ -631,6 +664,18 @@ class MacAutomationServer {
 
   async say(message: string) {
     await this.post('/speech/say', { message })
+  }
+
+  async updateStatus(update: MacwrightStatusUpdate) {
+    await this.post('/status/update', update)
+  }
+
+  async waitForStatusAction(update: MacwrightStatusUpdate) {
+    return await this.post<{ action: MacwrightStatusAction }>('/status/wait-action', update)
+  }
+
+  async statusCheckpoint() {
+    return await this.post<{ action?: MacwrightStatusAction }>('/status/checkpoint', {})
   }
 
   async clipboardGet() {
@@ -788,6 +833,7 @@ export class Macwright
     enabled: false,
     steps: 5,
   }
+  private failed = false
   private userActionGuard: PeekabooUserActionGuard
   private screenBounds?: ScreenBounds
   private screenCaptureIndex = 0
@@ -804,6 +850,12 @@ export class Macwright
 
     try {
       await computer.automation.start()
+      await computer.updateStatus({
+        detail: 'Starting session',
+        path: computer.parentDirectory,
+        state: 'playing',
+        title: basename(computer.directory),
+      })
 
       const {data} = await computer.permissions()
       const missingPermission = data.permissions.find((p: any) => !p.isGranted)
@@ -822,6 +874,7 @@ export class Macwright
         )
       }
     } catch (error) {
+      computer.failed = true
       await computer[Symbol.asyncDispose]().catch(() => {})
       throw error
     }
@@ -851,7 +904,12 @@ export class Macwright
   }
 
   async [Symbol.asyncDispose]() {
-    await this.automation.stop()
+    await this.automation.finishStatusAndDetach({
+      detail: this.failed ? 'Session failed' : 'Session completed',
+      path: this.parentDirectory,
+      state: this.failed ? 'failed' : 'succeeded',
+      title: basename(this.directory),
+    })
     await fs.rm(this.directory, { force: true, recursive: true })
   }
 
@@ -873,6 +931,12 @@ export class Macwright
     const id = this.stepId
     this.stepId += 1
     const startedAt = performance.now()
+    await this.updateStatus({
+      detail: title,
+      path: this.parentDirectory,
+      state: 'playing',
+      title: basename(this.directory),
+    }).catch(() => {})
     this.emit('step:start', { id, title } satisfies StepStartedEvent)
 
     try {
@@ -884,6 +948,7 @@ export class Macwright
       } satisfies StepEndedEvent)
       return result
     } catch (error) {
+      await this.markFailed(error)
       this.emit('step:end', {
         durationMs: Math.round(performance.now() - startedAt),
         error,
@@ -899,16 +964,35 @@ export class Macwright
     options: GuardedActionOptions,
     action: () => Promise<T>,
   ) {
-    await this.userActionGuard.assertStill(`before ${name}`)
-    const result = await action()
+    try {
+      const statusAction = await this.statusCheckpoint()
 
-    if (options.updatesUserActionState) {
-      await this.userActionGuard.acceptCurrentState()
-    } else {
-      await this.userActionGuard.assertStill(`after ${name}`)
+      if (statusAction === 'fail') {
+        throw new Error(`Macwright status bar requested failure before ${name}`)
+      }
+
+      if (statusAction === 'continue') {
+        const expected = this.userActionGuard.expectedState()
+
+        if (expected) {
+          await this.restoreUserActionState(expected)
+        }
+      }
+
+      await this.userActionGuard.assertStill(`before ${name}`)
+      const result = await action()
+
+      if (options.updatesUserActionState) {
+        await this.userActionGuard.acceptCurrentState()
+      } else {
+        await this.userActionGuard.assertStill(`after ${name}`)
+      }
+
+      return result
+    } catch (error) {
+      await this.markFailed(error)
+      throw error
     }
-
-    return result
   }
 
   async assertUserActionStill(location: string) {
@@ -921,6 +1005,38 @@ export class Macwright
 
   async restoreUserActionState(state: UserActionState) {
     await this.automation.restoreUserActionState(state)
+  }
+
+  async statusCheckpoint() {
+    const result = await this.automation.statusCheckpoint()
+    return result.action
+  }
+
+  async waitForUserActionChanged(event: UserActionChangedEvent) {
+    const result = await this.automation.waitForStatusAction({
+      detail: [
+        `Paused ${event.location}`,
+        ...formatUserActionChanges(event),
+      ].join(' '),
+      path: this.parentDirectory,
+      state: 'paused',
+      title: basename(this.directory),
+    })
+    return result.action
+  }
+
+  async updateStatus(update: MacwrightStatusUpdate) {
+    await this.automation.updateStatus(update)
+  }
+
+  private async markFailed(error: unknown) {
+    this.failed = true
+    await this.updateStatus({
+      detail: error instanceof Error ? error.message : String(error),
+      path: this.parentDirectory,
+      state: 'failed',
+      title: basename(this.directory),
+    }).catch(() => {})
   }
 
   async acceptCurrentUserActionState() {
@@ -1218,6 +1334,14 @@ export class Macwright
     let lastContents = ''
 
     while (Date.now() < deadline) {
+      const statusAction = await this.statusCheckpoint()
+
+      if (statusAction === 'fail') {
+        throw new Error(`Macwright status bar requested failure while waiting for ${path}`)
+      }
+
+      await this.assertUserActionStill(`during waitForFile ${path}`)
+
       try {
         lastContents = await this.readFile(path)
 
@@ -1764,7 +1888,7 @@ class PeekabooWindow implements AsyncDisposable, PeekabooOcrParent {
           }
           await this.parent.automation.clipboardSet(text)
           await this.parent.automation.hotkey('cmd,v')
-          await this.sleep(100)
+          await this.sleep(500)
         } finally {
           await this.parent.automation.clipboardRestore(this.clipboardSlot).catch(() => {})
         }
@@ -1790,6 +1914,20 @@ class PeekabooWindow implements AsyncDisposable, PeekabooOcrParent {
     options: GuardedActionOptions,
     action: () => Promise<T>,
   ) {
+    const statusAction = await this.parent.statusCheckpoint()
+
+    if (statusAction === 'fail') {
+      throw new Error(`Macwright status bar requested failure before ${name}`)
+    }
+
+    if (statusAction === 'continue') {
+      const expected = this.expectedUserActionState()
+
+      if (expected) {
+        await this.restoreUserActionState(expected)
+      }
+    }
+
     const parentExpectedState = this.parent.expectedUserActionState()
 
     if (parentExpectedState) {
@@ -1826,6 +1964,14 @@ class PeekabooWindow implements AsyncDisposable, PeekabooOcrParent {
 
   async restoreUserActionState(state: UserActionState) {
     await this.parent.restoreUserActionState(state)
+  }
+
+  async statusCheckpoint() {
+    return await this.parent.statusCheckpoint()
+  }
+
+  async waitForUserActionChanged(event: UserActionChangedEvent) {
+    return await this.parent.waitForUserActionChanged(event)
   }
 
   async acceptCurrentUserActionState() {
@@ -2542,12 +2688,276 @@ import ScreenCaptureKit
 import UniformTypeIdentifiers
 import Vision
 
+func runOnMainSync(_ action: @escaping () -> Void) {
+  if Thread.isMainThread {
+    action()
+    return
+  }
+
+  DispatchQueue.main.sync(execute: action)
+}
+
+final class MacwrightStatusItemController: NSObject, NSMenuDelegate {
+  private let condition = NSCondition()
+  private var action: String?
+  private var detail = "Starting"
+  private var path = ""
+  private var state = "playing"
+  private var statusItem: NSStatusItem?
+  private var title = "Macwright"
+
+  func install() {
+    runOnMainSync {
+      NSApplication.shared.setActivationPolicy(.accessory)
+      let item = NSStatusBar.system.statusItem(withLength: NSStatusItem.squareLength)
+      self.statusItem = item
+      self.render()
+    }
+  }
+
+  func update(state: String, title: String, detail: String, path: String) {
+    condition.lock()
+    self.state = state
+    self.title = title.isEmpty ? "Macwright" : title
+    self.detail = detail
+    self.path = path
+    condition.unlock()
+    renderOnMain()
+  }
+
+  func waitForAction(state: String, title: String, detail: String, path: String) -> String {
+    update(state: state, title: title, detail: detail, path: path)
+    condition.lock()
+
+    while action == nil {
+      condition.wait()
+    }
+
+    let selected = action ?? "continue"
+    action = nil
+    condition.unlock()
+
+    if selected == "continue" {
+      update(state: "playing", title: title, detail: "Continuing", path: path)
+    }
+
+    return selected
+  }
+
+  func checkpointAction() -> String? {
+    condition.lock()
+
+    if state != "paused" && action == nil {
+      condition.unlock()
+      return nil
+    }
+
+    while state == "paused" && action == nil {
+      condition.wait()
+    }
+
+    let selected = action
+    action = nil
+    let currentTitle = title
+    let currentPath = path
+    condition.unlock()
+
+    if selected == "continue" {
+      update(state: "playing", title: currentTitle, detail: "Continuing", path: currentPath)
+    }
+
+    return selected
+  }
+
+  func finish(state: String, title: String, detail: String, path: String, autoDismissMs: Int) {
+    update(state: state, title: title, detail: detail, path: path)
+
+    if autoDismissMs > 0 {
+      DispatchQueue.main.asyncAfter(deadline: .now() + .milliseconds(autoDismissMs)) {
+        exit(0)
+      }
+    }
+  }
+
+  func menuWillOpen(_ menu: NSMenu) {
+    condition.lock()
+    let shouldPause = state == "playing"
+    let currentTitle = title
+    let currentPath = path
+    condition.unlock()
+
+    if shouldPause {
+      update(
+        state: "paused",
+        title: currentTitle,
+        detail: "Paused from the Macwright status menu",
+        path: currentPath
+      )
+    }
+  }
+
+  @objc private func continueTest() {
+    choose("continue")
+  }
+
+  @objc private func failTest() {
+    choose("fail")
+    condition.lock()
+    let currentTitle = title
+    let currentPath = path
+    condition.unlock()
+    update(state: "failed", title: currentTitle, detail: "Failure requested from status menu", path: currentPath)
+  }
+
+  @objc private func copyPath() {
+    condition.lock()
+    let currentPath = path
+    condition.unlock()
+
+    NSPasteboard.general.clearContents()
+    NSPasteboard.general.setString(currentPath, forType: .string)
+  }
+
+  @objc private func dismiss() {
+    exit(0)
+  }
+
+  private func choose(_ value: String) {
+    condition.lock()
+    action = value
+    condition.broadcast()
+    condition.unlock()
+  }
+
+  private func renderOnMain() {
+    DispatchQueue.main.async {
+      self.render()
+    }
+  }
+
+  private func render() {
+    guard let statusItem else { return }
+    statusItem.button?.image = statusIcon()
+    statusItem.button?.imagePosition = .imageOnly
+    statusItem.button?.toolTip = tooltipText()
+
+    let menu = NSMenu()
+    menu.delegate = self
+    menu.addItem(disabledItem("Macwright: \\(stateLabel())"))
+
+    if !detail.isEmpty {
+      menu.addItem(disabledItem(detail))
+    }
+
+    if state == "playing" || state == "paused" {
+      menu.addItem(NSMenuItem.separator())
+      menu.addItem(actionItem("Continue test", #selector(continueTest)))
+      menu.addItem(actionItem("Fail test", #selector(failTest)))
+    } else {
+      menu.addItem(NSMenuItem.separator())
+
+      if !path.isEmpty {
+        menu.addItem(disabledItem(path))
+        menu.addItem(actionItem("Copy temp path", #selector(copyPath)))
+      }
+
+      menu.addItem(actionItem("Dismiss", #selector(dismiss)))
+    }
+
+    statusItem.menu = menu
+  }
+
+  private func actionItem(_ title: String, _ action: Selector) -> NSMenuItem {
+    let item = NSMenuItem(title: title, action: action, keyEquivalent: "")
+    item.target = self
+    return item
+  }
+
+  private func disabledItem(_ title: String) -> NSMenuItem {
+    let item = NSMenuItem(title: title, action: nil, keyEquivalent: "")
+    item.isEnabled = false
+    return item
+  }
+
+  private func tooltipText() -> String {
+    return [title, stateLabel(), detail, path]
+      .filter { !$0.isEmpty }
+      .joined(separator: "\\n")
+  }
+
+  private func stateLabel() -> String {
+    switch state {
+    case "failed": return "failed"
+    case "paused": return "paused"
+    case "succeeded": return "succeeded"
+    default: return "running"
+    }
+  }
+
+  private func statusIcon() -> NSImage {
+    let image = NSImage(size: NSSize(width: 28, height: 22))
+    image.lockFocus()
+    NSColor.clear.setFill()
+    NSRect(x: 0, y: 0, width: 28, height: 22).fill()
+
+    let paragraph = NSMutableParagraphStyle()
+    paragraph.alignment = .center
+    let attrs: [NSAttributedString.Key: Any] = [
+      .font: NSFont.boldSystemFont(ofSize: 18),
+      .foregroundColor: NSColor.labelColor,
+      .paragraphStyle: paragraph,
+    ]
+    NSString(string: "M").draw(in: NSRect(x: 1, y: 1, width: 19, height: 20), withAttributes: attrs)
+
+    drawStateGlyph(in: NSRect(x: 17, y: 2, width: 10, height: 10))
+    image.unlockFocus()
+    image.isTemplate = false
+    return image
+  }
+
+  private func drawStateGlyph(in rect: NSRect) {
+    switch state {
+    case "paused":
+      NSColor.systemOrange.setFill()
+      NSBezierPath(rect: NSRect(x: rect.minX + 1, y: rect.minY, width: 2.5, height: rect.height)).fill()
+      NSBezierPath(rect: NSRect(x: rect.minX + 6, y: rect.minY, width: 2.5, height: rect.height)).fill()
+    case "succeeded":
+      NSColor.systemGreen.setStroke()
+      let path = NSBezierPath()
+      path.lineWidth = 2
+      path.move(to: NSPoint(x: rect.minX + 1, y: rect.midY))
+      path.line(to: NSPoint(x: rect.minX + 4, y: rect.minY + 1))
+      path.line(to: NSPoint(x: rect.maxX - 1, y: rect.maxY - 1))
+      path.stroke()
+    case "failed":
+      NSColor.systemRed.setStroke()
+      let path = NSBezierPath()
+      path.lineWidth = 2
+      path.move(to: NSPoint(x: rect.minX + 1, y: rect.minY + 1))
+      path.line(to: NSPoint(x: rect.maxX - 1, y: rect.maxY - 1))
+      path.move(to: NSPoint(x: rect.minX + 1, y: rect.maxY - 1))
+      path.line(to: NSPoint(x: rect.maxX - 1, y: rect.minY + 1))
+      path.stroke()
+    default:
+      NSColor.systemBlue.setFill()
+      let path = NSBezierPath()
+      path.move(to: NSPoint(x: rect.minX + 1, y: rect.minY))
+      path.line(to: NSPoint(x: rect.maxX - 1, y: rect.midY))
+      path.line(to: NSPoint(x: rect.minX + 1, y: rect.maxY))
+      path.close()
+      path.fill()
+    }
+  }
+}
+
 final class AutomationServer {
   private var shouldStop = false
   private var clipboardSlots: [String: String] = [:]
   private var sayProcess: Process?
+  private let statusItem = MacwrightStatusItemController()
 
   func run() throws {
+    statusItem.install()
     let server = socket(AF_INET, SOCK_STREAM, 0)
     guard server >= 0 else { throw ServerError("socket failed") }
 
@@ -2578,6 +2988,17 @@ final class AutomationServer {
     print("PORT \\(Int(UInt16(bigEndian: boundAddress.sin_port)))")
     fflush(stdout)
 
+    DispatchQueue.global(qos: .userInitiated).async {
+      self.serve(server: server)
+      DispatchQueue.main.async {
+        NSApp.terminate(nil)
+      }
+    }
+
+    NSApplication.shared.run()
+  }
+
+  private func serve(server: Int32) {
     while !shouldStop {
       let client = accept(server, nil, nil)
       if client < 0 { continue }
@@ -2591,7 +3012,7 @@ final class AutomationServer {
   private func handle(client: Int32) {
     do {
       let request = try readRequest(client: client)
-      let response = try route(path: request.path, body: request.body)
+      let response = try routeRequest(request)
       try writeResponse(client: client, status: 200, object: response)
     } catch {
       let message = String(describing: error)
@@ -2599,11 +3020,68 @@ final class AutomationServer {
     }
   }
 
+  private func routeRequest(_ request: Request) throws -> [String: Any] {
+    if routeCanRunOffMainThread(request.path) {
+      return try route(path: request.path, body: request.body)
+    }
+
+    var result: Result<[String: Any], Error>?
+    runOnMainSync {
+      do {
+        result = .success(try self.route(path: request.path, body: request.body))
+      } catch {
+        result = .failure(error)
+      }
+    }
+
+    return try result?.get() ?? [:]
+  }
+
+  private func routeCanRunOffMainThread(_ path: String) -> Bool {
+    return [
+      "/status/checkpoint",
+      "/status/finish",
+      "/status/update",
+      "/status/wait-action",
+    ].contains(path)
+  }
+
   private func route(path: String, body: [String: Any]) throws -> [String: Any] {
     switch path {
     case "/shutdown":
       sayProcess?.terminate()
       shouldStop = true
+      return ["ok": true]
+    case "/status/update":
+      statusItem.update(
+        state: requiredString(body, "state"),
+        title: string(body, "title") ?? "Macwright",
+        detail: string(body, "detail") ?? "",
+        path: string(body, "path") ?? ""
+      )
+      return ["ok": true]
+    case "/status/wait-action":
+      return [
+        "action": statusItem.waitForAction(
+          state: requiredString(body, "state"),
+          title: string(body, "title") ?? "Macwright",
+          detail: string(body, "detail") ?? "",
+          path: string(body, "path") ?? ""
+        )
+      ]
+    case "/status/checkpoint":
+      if let action = statusItem.checkpointAction() {
+        return ["action": action]
+      }
+      return ["ok": true]
+    case "/status/finish":
+      statusItem.finish(
+        state: requiredString(body, "state"),
+        title: string(body, "title") ?? "Macwright",
+        detail: string(body, "detail") ?? "",
+        path: string(body, "path") ?? "",
+        autoDismissMs: int(body, "autoDismissMs") ?? 120000
+      )
       return ["ok": true]
     case "/permissions":
       return [
@@ -2720,7 +3198,7 @@ final class AutomationServer {
     case "/user-action-state":
       let point = CGEvent(source: nil)?.location ?? CGPoint(x: 0, y: 0)
       return [
-        "foregroundApp": NSWorkspace.shared.frontmostApplication?.localizedName ?? "",
+        "foregroundApp": frontmostApplicationName(),
         "mousePosition": ["x": point.x, "y": point.y],
       ]
     case "/restore-user-action-state":
@@ -2789,7 +3267,7 @@ final class AutomationServer {
       return false
     }
 
-    if NSWorkspace.shared.frontmostApplication?.processIdentifier != app.processIdentifier {
+    if frontmostApplicationProcessIdentifier() != app.processIdentifier {
       return false
     }
 
@@ -2814,6 +3292,34 @@ final class AutomationServer {
     let expectedTitle = windowTitleForWindow(id: id)
 
     return focusedTitle != nil && focusedTitle == expectedTitle
+  }
+
+  private func frontmostApplicationName() -> String {
+    if let name = try? executeAppleScript(
+      "tell application \\"System Events\\" to get name of first application process whose frontmost is true"
+    ).stringValue, !name.isEmpty {
+      return name
+    }
+
+    var fallback = ""
+    runOnMainSync {
+      fallback = NSWorkspace.shared.frontmostApplication?.localizedName ?? ""
+    }
+    return fallback
+  }
+
+  private func frontmostApplicationProcessIdentifier() -> pid_t? {
+    if let descriptor = try? executeAppleScript(
+      "tell application \\"System Events\\" to get unix id of first application process whose frontmost is true"
+    ) {
+      return pid_t(descriptor.int32Value)
+    }
+
+    var processIdentifier: pid_t?
+    runOnMainSync {
+      processIdentifier = NSWorkspace.shared.frontmostApplication?.processIdentifier
+    }
+    return processIdentifier
   }
 
   private func closeWindow(id: Int) throws {
@@ -3821,6 +4327,10 @@ final class AutomationServer {
 
   private func requiredString(_ body: [String: Any], _ key: String) -> String {
     return body[key] as? String ?? ""
+  }
+
+  private func string(_ body: [String: Any], _ key: String) -> String? {
+    return body[key] as? String
   }
 
   private func requiredInt(_ body: [String: Any], _ key: String) -> Int {
@@ -5094,7 +5604,7 @@ class PeekabooUserActionGuard {
     }
 
     await this.parent.deadAir(async () => {
-      const action = await waitForUserActionChangedDialog(event)
+      const action = await this.parent.waitForUserActionChanged(event)
 
       if (action === 'fail') throw new PeekabooUserActionInterruptedError(event, 'User explicitly requested failure')
 
@@ -5513,76 +6023,6 @@ function formatUserActionChanges(event: UserActionChangedEvent) {
   }
 
   return lines
-}
-
-async function waitForUserActionChangedDialog(
-  event: UserActionChangedEvent,
-): Promise<'continue' | 'fail'> {
-  const { promise, resolve } = Promise.withResolvers<'continue' | 'fail'>()
-  const child = spawn('osascript', [
-    '-e',
-    [
-      'display dialog',
-      JSON.stringify(
-        [
-          'User action changed; the script is paused.',
-          '',
-          `Location: ${event.location}`,
-          ...formatUserActionChanges(event),
-          '',
-          'Continue script will restore the expected app and mouse position, then resume.',
-        ].join('\n'),
-      ),
-      'buttons {"Continue script", "Fail script"} default button "Continue script" with icon caution',
-      'with title "Peekaboo user action guard"',
-    ].join(' '),
-  ], {
-    stdio: ['ignore', 'pipe', 'ignore'],
-  })
-  let stdout = ''
-
-  if (child.pid) {
-    void moveUserActionDialogToTopLeft(child.pid)
-  }
-
-  child.stdout.on('data', (chunk) => {
-    stdout += String(chunk)
-  })
-  child.on('error', () => resolve('fail'))
-  child.on('exit', (code) => {
-    if (code === 0 && stdout.includes('button returned:Continue script')) {
-      resolve('continue')
-      return
-    }
-
-    resolve('fail')
-  })
-  return await promise
-}
-
-async function moveUserActionDialogToTopLeft(processId: number) {
-  await sleep(150)
-  const { promise, resolve } = Promise.withResolvers<void>()
-  const child = spawn('osascript', [
-    '-e',
-    `tell application "System Events" to tell (first process whose unix id is ${processId}) to set position of window 1 to {24, 48}`,
-  ], {
-    stdio: 'ignore',
-  })
-  const timer = setTimeout(() => {
-    child.kill('SIGTERM')
-    resolve()
-  }, 2_000)
-
-  child.on('error', () => {
-    clearTimeout(timer)
-    resolve()
-  })
-  child.on('exit', () => {
-    clearTimeout(timer)
-    resolve()
-  })
-  await promise
 }
 
 function formatSeconds(ms: number) {
