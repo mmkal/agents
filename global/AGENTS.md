@@ -45,6 +45,8 @@ The body of the pull request shouldn't just be a simulacrum of the task file. It
 
 Similarly if there's a bug you could showcase some sample code with the before/after output. You can use comments and hand-waving in this sample code. It's just for communication.
 
+If you're creating a pull request based on a prompt, it should be opened as a draft. If we've been doing lots of back and forth on the actual code/contents, it can be opened as ready for review. When in doubt, go draft.
+
 ### Pull request media
 
 When a pull request would benefit from visual review, include screenshots or short videos in the PR body. The most reliable way to upload arbitrary media to GitHub is to use the browser attachment flow:
