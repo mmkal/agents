@@ -1917,27 +1917,32 @@ class PeekabooWindow implements AsyncDisposable, PeekabooOcrParent {
     options: GuardedActionOptions,
     action: () => Promise<T>,
   ) {
-    const statusAction = await this.parent.statusCheckpoint()
+    // Pre-action checks are invisible bookkeeping (status checkpoint, user
+    // action guard reads); mark them as dead air so they're cut from videos.
+    await this.deadAir(async () => {
+      const statusAction = await this.parent.statusCheckpoint()
 
-    if (statusAction === 'fail') {
-      throw new Error(`Macwright status bar requested failure before ${name}`)
-    }
-
-    if (statusAction === 'continue') {
-      const expected = this.expectedUserActionState()
-
-      if (expected) {
-        await this.restoreUserActionState(expected)
+      if (statusAction === 'fail') {
+        throw new Error(`Macwright status bar requested failure before ${name}`)
       }
-    }
 
-    const parentExpectedState = this.parent.expectedUserActionState()
+      if (statusAction === 'continue') {
+        const expected = this.expectedUserActionState()
 
-    if (parentExpectedState) {
-      this.userActionGuard.acceptState(parentExpectedState)
-    }
+        if (expected) {
+          await this.restoreUserActionState(expected)
+        }
+      }
 
-    await this.userActionGuard.assertStill(`before ${name}`)
+      const parentExpectedState = this.parent.expectedUserActionState()
+
+      if (parentExpectedState) {
+        this.userActionGuard.acceptState(parentExpectedState)
+      }
+
+      await this.userActionGuard.assertStill(`before ${name}`)
+    })
+
     const result = await action()
 
     if (options.updatesUserActionState) {
@@ -2049,7 +2054,11 @@ class PeekabooWindow implements AsyncDisposable, PeekabooOcrParent {
 
     this.video.endAutozoomAt(start)
 
-    const imagePath = await this.captureWindowImage().catch(() => undefined)
+    // The window capture is invisible bookkeeping for autozoom; mark it as
+    // dead air so it's cut from videos.
+    const imagePath = await this.deadAir(() =>
+      this.captureWindowImage().catch(() => undefined),
+    )
 
     if (!imagePath) {
       return
