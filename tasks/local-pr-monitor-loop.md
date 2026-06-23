@@ -5,7 +5,7 @@ size: medium
 
 # Session Monitor
 
-Status summary: proposal revised after user feedback on 2026-06-23. The design is now a much smaller generic `session-monitor` skill: a local singleton cron runner reads a gitignored `monitor.yml`, finds overdue session reminders, resumes the configured session, appends a tiny log entry, and prunes expired monitors. Implementation has not started.
+Status summary: implementation complete. The PR now replaces `pr-monitor` with a generic `session-monitor` skill, a TypeScript runner, gitignored local monitor state, cron due detection, bounded logs, expiry pruning, singleton run/start/stop/status commands, and focused tests. Main remaining work is only real-world dogfooding against an actual long-lived Codex session.
 
 ## Goal
 
@@ -70,19 +70,21 @@ The singleton runner should refuse to start if another runner is already alive. 
 
 ## Checklist
 
-- [ ] Add `monitor.yml` and the runner log/pid directory to `.gitignore`. _Local session IDs and runtime logs should not be auto-committed._
-- [ ] Create `global/skills/session-monitor/SKILL.md`. _This replaces the old PR-specific skill surface._
-- [ ] Add `global/skills/session-monitor/scripts/session-monitor.ts`. _TypeScript executed directly by modern Node; no build step._
-- [ ] Add a tiny shell shim if useful. _Only for ergonomic invocation from skill docs._
-- [ ] Remove or retire `global/skills/pr-monitor/`. _Avoid backcompat pressure from the old PR-specific implementation._
-- [ ] Implement YAML load/save with atomic writes. _Use an explicit YAML parser dependency if needed._
-- [ ] Implement cron due detection. _Support standard five-field cron for v1._
-- [ ] Implement `tick`. _Resume due sessions, append bounded `logs`, handle errors, and prune monitors expired by more than one hour._
-- [ ] Implement singleton `run`. _One local loop owns all monitors in `monitor.yml`._
-- [ ] Implement `status`. _Make it easy to eyeball what is configured and whether the runner is alive._
-- [ ] Spike the Codex adapter. _Confirm `codex exec resume <session_id> <prompt>` is the right direct-session bump path._
-- [ ] Keep Claude/opencode as later adapters. _The file shape should allow them, but only Codex needs to work now._
-- [ ] Add focused tests. _Use temp `monitor.yml` files, fake time, and fake adapter commands._
+- [x] Add `monitor.yml` and the runner log/pid directory to `.gitignore`. _Added repo-local `monitor.yml` and `.session-monitor/` ignores._
+- [x] Create `global/skills/session-monitor/SKILL.md`. _Added the new skill doc with quick-start schema and command usage._
+- [x] Add `global/skills/session-monitor/scripts/session-monitor.ts`. _Implemented the TypeScript runner directly under the skill._
+- [x] Add a tiny shell shim if useful. _Added `session-monitor.sh` to invoke the TypeScript runner through Node._
+- [x] Remove or retire `global/skills/pr-monitor/`. _Deleted the old PR-specific skill files so it cannot poison selection._
+- [x] Implement YAML load/save with atomic writes. _Runner parses YAML with the explicit `yaml` dependency and writes via temp-file rename._
+- [x] Implement cron due detection. _Supports five-field cron with wildcards, lists, ranges, and step values._
+- [x] Implement `tick`. _Resumes due sessions, appends bounded logs, handles errors, and prunes monitors expired by more than one hour._
+- [x] Implement singleton `run`. _Foreground loop owns all monitors in `monitor.yml` and exits when the file is empty._
+- [x] Implement `start` and `stop`. _Background wrapper writes `.session-monitor/runner.pid` and pipes output to `.session-monitor/runner.log`._
+- [x] Implement `status`. _Prints monitor file, runner state, and monitor summary lines._
+- [x] Spike the Codex adapter. _The previous grill loop successfully used `codex exec resume`; tests now assert the runner invokes the same adapter shape._
+- [x] Keep Claude/opencode as later adapters. _The schema keeps `tool` and `adapter`; unsupported adapters are logged as errors for now._
+- [x] Add focused tests. _`tests/session-monitor.test.ts` covers due detection, no-op ticks, pruning, prompts, YAML writes, and fake adapter commands._
+- [x] Run verification. _Passed `pnpm exec vitest run tests/session-monitor.test.ts`, `pnpm typecheck`, `pnpm test`, and a direct Node `.ts` import smoke._
 
 ## Out Of Scope
 
@@ -96,3 +98,4 @@ The singleton runner should refuse to start if another runner is already alive. 
 
 - 2026-06-22: Created the original proposal via `grill-you`; Claude Code authentication failed with `401`, so the interview used a separate `codex exec` session. That older decision trail remains in `tasks/local-pr-monitor-loop.interview.md`.
 - 2026-06-23: User rejected the PR-specific/cursor-heavy design. Revised the proposal to a generic `session-monitor` skill with only session, cron schedule, expiry, and small logs.
+- 2026-06-23: Implemented the TypeScript runner and replaced the old `pr-monitor` skill with `session-monitor`. Verification passed locally; the remaining risk is dogfooding with a real saved Codex session and an actual overnight monitor.
