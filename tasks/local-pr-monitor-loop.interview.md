@@ -206,3 +206,15 @@ Agreed design:
 - `start` is a thin local background wrapper, not launchd/cron. It writes `.monitor-prs/runner.pid` and `.monitor-prs/runner.log`.
 - Use atomic writes and a lock file; `status` warns on locks and shows runner liveness.
 - `start` should exit once all entries are expired/retired/pruned, so no empty loop lives forever.
+
+## User Correction - 2026-06-23
+
+The user rejected the proposed shape as too complex. New direction:
+
+- Keep only `session`, `schedule`, and small `logs` in `monitor.yml`.
+- Replace the `pr-monitor` skill completely with a new `session-monitor` skill to avoid PR-specific backcompat pressure.
+- Use a global singleton cron-like runner that finds overdue monitors from cron expressions.
+- Prune based on `expires_at` once entries have been expired for about an hour.
+- Write the Node runner in TypeScript, because modern Node can run `.ts` directly.
+
+This supersedes the earlier PR-specific cursor/delta design.

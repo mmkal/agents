@@ -3,110 +3,96 @@ status: ready
 size: medium
 ---
 
-# Local PR Monitor Loop
+# Session Monitor
 
-Status summary: proposal ready, implementation not started. The design is a local gitignored `monitor.yml` registry plus a small `pr-monitor` runner that polls GitHub deterministically and wakes Codex through a headless resumed turn only when new actionable PR state appears. Main missing pieces are the implementation spike for `codex exec resume` against an existing interactive session and the runner itself.
+Status summary: proposal revised after user feedback on 2026-06-23. The design is now a much smaller generic `session-monitor` skill: a local singleton cron runner reads a gitignored `monitor.yml`, finds overdue session reminders, resumes the configured session, appends a tiny log entry, and prunes expired monitors. Implementation has not started.
 
 ## Goal
 
-Make "monitor this PR" a truthful local capability instead of a vague instruction. A PR is only "being monitored now" when an unexpired registry entry exists and a local foreground/background runner is alive and able to wake an agent.
+Replace the existing `pr-monitor` skill with a simpler generic session monitor. The monitor should not know about PRs, review threads, CI, or cursors. The session being resumed already knows what it was asked to monitor.
 
 ## Agreed Design
 
-Runtime state lives in repo-root `monitor.yml`, but the file must be gitignored. Durable policy and schema documentation live in `global/skills/pr-monitor/SKILL.md`; the interview trail is preserved in `tasks/local-pr-monitor-loop.interview.md`.
+Create a new global skill called `session-monitor`. Do not extend `pr-monitor`; remove or retire the old `global/skills/pr-monitor/` implementation so old PR-specific assumptions do not leak into the new design.
 
-V1 should extend the existing `pr-monitor` skill, not create a new skill. Add a plain Node ESM runner under `global/skills/pr-monitor/scripts/`, plus a tiny shell shim. Keep `watch-pr.sh` as the simple foreground inspector.
+Runtime state lives in a local gitignored `monitor.yml`. The file should be easy to open and understand: each monitor has an `id`, a `session`, a `schedule`, and short `logs`. No PR target, no cursor database, no CI fingerprint, no stored prompt body.
 
-The runner uses deterministic GitHub deltas, not an LLM fork-probe on every tick. Wake on unseen non-self review-thread comments, issue comments, review summaries, and CI transitions into bad states. Ignore already-seen items, resolved thread churn, and the agent's own `🤖` replies when identifiable.
+A single local runner acts like a cron loop. On each tick, it reads `monitor.yml`, finds monitors whose cron expression is due and whose `expires_at` has not passed, resumes the configured session with a fixed scheduled-message prompt, and appends a log entry. Expired monitors are pruned once they have been expired for more than an hour.
 
-The first wake adapter should be `codex exec resume <session_id> <prompt>`, pending a small spike confirming it works against the kind of Codex session ID agents can record today. If it does not work reliably for interactive sessions, use Codex app-server `thread/resume` + `turn/start` as the next adapter.
+The last log timestamp is the only scheduling cursor. If a monitor has no logs, it is due on the first matching tick. Logs should be trimmed automatically, for example to the most recent 20 entries per monitor, so the file stays small.
 
-The runner owns `monitor.yml` during automated ticks. The headless Codex turn handles PR comments, CI, code changes, replies, and review-thread resolution according to `pr-monitor` rules; it does not mutate monitor state directly. The runner updates cursors, wake status, and logs after the child process exits.
+Modern Node can run TypeScript directly in this environment, so the runner should be written as TypeScript and executed directly by Node rather than compiled first.
 
 ## Proposed `monitor.yml` Shape
 
 ```yaml
 monitors:
   - id: agents-1234
-    status: active
-    mode: active
-    pr:
-      owner: mmkal
-      repo: agents
-      number: 1234
-      url: https://github.com/mmkal/agents/pull/1234
     session:
       tool: codex
       id: 019eef99-b1e2-7910-8dd3-1da7fd723e02
       adapter: codex-exec-resume
       cwd: /Users/mmkal/src/worktrees/agents/local-pr-monitor-loop
     schedule:
-      interval_seconds: 300
-      next_due: 2026-06-22T12:00:00Z
+      cron: "5 * * * *"
       expires_at: 2026-06-23T12:00:00Z
-      prune_after: 2026-06-24T12:00:00Z
-    cursors:
-      review_thread_comment_ids: []
-      issue_comment_ids: []
-      review_ids: []
-      checks_fingerprint: ""
-    last_wake:
-      at:
-      exit_code:
-      summary:
-      log_path:
+    logs:
+      - { timestamp: 2026-06-23T11:00:00Z, result: noop }
+      - { timestamp: 2026-06-23T12:05:00Z, result: bumped }
 ```
 
-`monitor.yml` should stay a compact control panel, not a history database. Raw snapshots, wake transcripts, pid files, and runner logs belong under ignored `.monitor-prs/`.
+Notes:
+
+- Use list syntax under `monitors:` so multiple monitors can live in one file.
+- `logs` should stay tiny and bounded. Suggested result values: `bumped`, `noop`, `error`, `expired`, `pruned`.
+- Do not store the reminder prompt in each entry unless a later implementation proves customization is necessary.
+
+## Scheduled Message
+
+Use a fixed prompt derived from the monitor file path, for example:
+
+```text
+[<absolute path to monitor.yml>] scheduled message from session-monitor.
+Continue the monitoring/follow-up work this session was responsible for.
+If there is nothing to do, say so briefly and stop.
+```
+
+The runner should not try to understand what is being monitored. The resumed session owns that context.
+
+## Runner Behavior
+
+- `tick`: read `monitor.yml`, run every due unexpired monitor once, append a bounded log result, prune entries expired by more than one hour, and write the file atomically.
+- `run`: foreground singleton loop that calls `tick` often enough to satisfy minute-granularity cron schedules.
+- `start` / `stop`: optional thin wrappers around `run` using a PID file and logs under an ignored local directory.
+- `status`: print configured monitors, next due time if easily computable, expiry, recent log result, and whether the singleton runner is alive.
+
+The singleton runner should refuse to start if another runner is already alive. It should use a lock file or equivalent atomic guard while rewriting `monitor.yml`.
 
 ## Checklist
 
-- [ ] Add `monitor.yml` and `.monitor-prs/` to `.gitignore`. _Needed so local session IDs, cursors, and logs are not auto-committed._
-- [ ] Add an explicit YAML parser dependency. _Use a direct `yaml` package dependency instead of relying on `yq`, Ruby, Python, or a transitive package._
-- [ ] Add `global/skills/pr-monitor/scripts/monitor-prs.mjs`. _Plain Node ESM; no TypeScript build step for a symlinked skill script._
-- [ ] Add `global/skills/pr-monitor/scripts/monitor-prs.sh`. _Tiny shell shim that invokes the Node runner._
-- [ ] Implement `status`. _Print entry status plus runner liveness: active/passive/broken/expired/retired and running/stale/locked/absent._
-- [ ] Implement `tick`. _Poll GitHub once, detect actionable deltas from stored cursors, wake Codex if needed, then atomically update monitor state._
-- [ ] Implement `loop`. _Run `tick` repeatedly for due active entries until interrupted or all entries stop._
-- [ ] Implement `start` and `stop`. _Thin local background wrapper; write `.monitor-prs/runner.pid` and `.monitor-prs/runner.log`, with no launchd/cron install._
-- [ ] Implement `retire` and `prune`. _Stop entries manually and remove stopped entries after their prune grace period._
-- [ ] Add locking and atomic writes. _Prevent two local runner processes from corrupting `monitor.yml`; make `status` show lock state._
-- [ ] Extend `global/skills/pr-monitor/SKILL.md`. _Document the active-monitor truth boundary, YAML schema, commands, expiry behavior, and exact wording agents should use when the runner is not alive._
-- [ ] Spike `codex exec resume <session_id>`. _Confirm it can resume the relevant saved Codex session IDs agents can record today; if not, document and switch the task to the app-server adapter._
-- [ ] Add focused tests for cursor/delta detection and state transitions. _Use fake `gh`/`codex` command outputs and a temp monitor file._
+- [ ] Add `monitor.yml` and the runner log/pid directory to `.gitignore`. _Local session IDs and runtime logs should not be auto-committed._
+- [ ] Create `global/skills/session-monitor/SKILL.md`. _This replaces the old PR-specific skill surface._
+- [ ] Add `global/skills/session-monitor/scripts/session-monitor.ts`. _TypeScript executed directly by modern Node; no build step._
+- [ ] Add a tiny shell shim if useful. _Only for ergonomic invocation from skill docs._
+- [ ] Remove or retire `global/skills/pr-monitor/`. _Avoid backcompat pressure from the old PR-specific implementation._
+- [ ] Implement YAML load/save with atomic writes. _Use an explicit YAML parser dependency if needed._
+- [ ] Implement cron due detection. _Support standard five-field cron for v1._
+- [ ] Implement `tick`. _Resume due sessions, append bounded `logs`, handle errors, and prune monitors expired by more than one hour._
+- [ ] Implement singleton `run`. _One local loop owns all monitors in `monitor.yml`._
+- [ ] Implement `status`. _Make it easy to eyeball what is configured and whether the runner is alive._
+- [ ] Spike the Codex adapter. _Confirm `codex exec resume <session_id> <prompt>` is the right direct-session bump path._
+- [ ] Keep Claude/opencode as later adapters. _The file shape should allow them, but only Codex needs to work now._
+- [ ] Add focused tests. _Use temp `monitor.yml` files, fake time, and fake adapter commands._
 
 ## Out Of Scope
 
-- Hosted services, webhooks, GitHub Actions, or Pullfrog as the core monitor.
-- Installing launchd, cron, or any system-level daemon in v1.
-- Running an LLM fork-probe on every polling tick.
-- Full Claude/opencode support. V1 should keep the adapter shape open for later tools, but only Codex needs to work now.
-- Persisting full comment bodies or transcripts in `monitor.yml`.
-
-## Guesses And Assumptions
-
-- [guess: the user mainly wants to eliminate false confidence, not prohibit passive diagnostics.]
-- [guess: root `monitor.yml` is more eyeballable than hiding it under `ignoreme/`, but the prompt's `ignoreme/monitor.yml` path suggests an alternate acceptable location.]
-- [guess: the user's fork idea was mainly to avoid empty main-session turns; deterministic cursors solve that more simply.]
-- [guess: acting in a headless turn is more useful than merely nudging a dead/closed UI session.]
-- [guess: the user values boring reliability over avoiding one small package.]
-
-## Research Notes
-
-- Anthropic's "Building effective agents" argues for simple, composable patterns first, with ground truth, checkpoints, and stopping conditions.
-- Anthropic's "Writing effective tools for agents" supports local prototypes, evaluations, raw transcript review, and runtime/token metrics.
-- Addy Osmani's loop-engineering writeup frames a useful local loop as automation heartbeat + worktrees + skills/connectors + checker agents + external state.
-- Codex docs confirm relevant primitives: thread automations as inspiration, `codex exec resume` for non-interactive continuation, and app-server `thread/resume`/`thread/fork`/`turn/start` as a richer later adapter.
-
-Sources:
-
-- https://www.anthropic.com/engineering/building-effective-agents
-- https://www.anthropic.com/engineering/writing-tools-for-agents
-- https://addyosmani.com/blog/loop-engineering/
-- https://developers.openai.com/codex/app/automations
-- https://developers.openai.com/codex/app-server
-- https://developers.openai.com/codex/noninteractive
+- PR-specific polling, GitHub review-thread cursors, CI state, or comment filtering.
+- Fork-probe classification in v1.
+- Hosted services, webhooks, GitHub Actions, launchd install, or cron install.
+- A durable prompt registry.
+- Backwards compatibility with `pr-monitor`.
 
 ## Implementation Notes
 
-- 2026-06-22: Created stub task and ran `grill-you`; Claude Code authentication failed with `401`, so the interview used a separate `codex exec` session with the same one-question-at-a-time dossier. The resulting decision trail is in `tasks/local-pr-monitor-loop.interview.md`.
+- 2026-06-22: Created the original proposal via `grill-you`; Claude Code authentication failed with `401`, so the interview used a separate `codex exec` session. That older decision trail remains in `tasks/local-pr-monitor-loop.interview.md`.
+- 2026-06-23: User rejected the PR-specific/cursor-heavy design. Revised the proposal to a generic `session-monitor` skill with only session, cron schedule, expiry, and small logs.
