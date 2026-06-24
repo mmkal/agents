@@ -16,7 +16,7 @@ function slugify(value: string) {
     .toLowerCase()
     .replace(/[^a-z0-9]+/g, '-')
     .replace(/^-+|-+$/g, '')
-    .slice(0, 80) || 'compwright-demo'
+    .slice(0, 80) || 'macwright-demo'
 }
 
 type ComputerExecResult = {
@@ -555,6 +555,14 @@ class MacAutomationServer {
     target: string
   }) {
     await this.post('/open', options)
+  }
+
+  async launchApp(app: string) {
+    await this.post('/app/launch', { app })
+  }
+
+  async quitApp(app: string) {
+    await this.post('/app/quit', { app })
   }
 
   async windows(app: string) {
@@ -1124,7 +1132,7 @@ export class Macwright
         return new PeekabooWindow({
           app,
           assetsDirectory: this.assetsDirectory,
-          clipboardSlot: `demo-helper-${basename(this.directory)}`,
+          clipboardSlot: `macwright-${basename(this.directory)}`,
           closeOnDispose: options.closeOnDispose,
           directory: this.directory,
           parent: this,
@@ -1157,7 +1165,7 @@ export class Macwright
       return new PeekabooWindow({
         app,
         assetsDirectory: this.assetsDirectory,
-        clipboardSlot: `demo-helper-${basename(this.directory)}`,
+        clipboardSlot: `macwright-${basename(this.directory)}`,
         closeOnDispose: options.closeOnDispose,
         directory: this.directory,
         parent: this,
@@ -1181,6 +1189,26 @@ export class Macwright
       waitUntilReady: options.waitUntilReady,
       windowTitle: options.windowTitle,
     })
+  }
+
+  async launch(app: string) {
+    await this.guardedAction(
+      `launch ${app}`,
+      { updatesUserActionState: true },
+      async () => {
+        await this.automation.launchApp(app)
+      },
+    )
+  }
+
+  async quit(app: string) {
+    await this.guardedAction(
+      `quit ${app}`,
+      { updatesUserActionState: true },
+      async () => {
+        await this.automation.quitApp(app)
+      },
+    )
   }
 
   async permissions() {
@@ -3087,6 +3115,12 @@ final class AutomationServer {
           ["name": "Screen Recording", "isGranted": CGPreflightScreenCaptureAccess()],
         ],
       ]
+    case "/app/launch":
+      try launchApp(requiredString(body, "app"))
+      return ["ok": true]
+    case "/app/quit":
+      try quitApp(requiredString(body, "app"))
+      return ["ok": true]
     case "/open":
       try open(body)
       return ["ok": true]
@@ -3223,6 +3257,23 @@ final class AutomationServer {
     if status != 0 {
       throw ServerError("open failed for \\(app) \\(target)")
     }
+  }
+
+  private func launchApp(_ app: String) throws {
+    let status = try runProcess("/usr/bin/open", ["-a", app])
+    if status != 0 {
+      throw ServerError("launch failed for \\(app)")
+    }
+
+    for _ in 0..<150 {
+      if appIsRunning(app) {
+        return
+      }
+
+      usleep(200_000)
+    }
+
+    throw ServerError("timed out waiting for \\(app) to launch")
   }
 
   private func windows(app: String) -> [[String: Any]] {
@@ -6665,7 +6716,7 @@ function normalizeVideoZoomEvents(
   return spans
 }
 
-export const peekabooComputerVideoTestInternals = {
+export const macwrightVideoTestInternals = {
   autozoomVideoFilter,
   normalizeVideoFastForwardSpans,
   normalizeVideoZoomEvents,

@@ -9,12 +9,12 @@ import { expect, test } from 'vitest'
 
 import {
   macAutomationServerSwiftSource,
-  peekabooComputerVideoTestInternals,
+  macwrightVideoTestInternals,
 } from '../examples/macwright.ts'
 
 const execFileAsync = promisify(execFile)
 
-test('peekaboo computer helper-backed examples do not call the peekaboo CLI', async () => {
+test('Macwright examples do not call the peekaboo CLI', async () => {
   const files = [
     'examples/macwright.ts',
     ...(
@@ -42,13 +42,48 @@ test('peekaboo computer helper-backed examples do not call the peekaboo CLI', as
     expect.arrayContaining([
       'examples/macwright.ts',
       'examples/sqlfu.test.ts',
+      'examples/tsc-cursor.test.ts',
       'examples/x.test.ts',
     ]),
   )
 })
 
+test('Macwright is the only demo helper surface', async () => {
+  const sourcePaths = [
+    ...await Array.fromAsync(fs.glob('examples/**/*.ts')),
+    ...await Array.fromAsync(fs.glob('src/**/*.ts')),
+    ...await Array.fromAsync(fs.glob('tests/**/*.ts')),
+    ...await Array.fromAsync(fs.glob('tasks/**/*.md')),
+    'package.json',
+  ]
+  const forbiddenTerms = [
+    'create' + 'DemoHelper',
+    'demo' + '-helper',
+    'inline' + '-source-updater',
+    'DEMO' + '_MODE',
+    'Peekaboo' + 'Computer',
+    'comp' + 'wright',
+  ]
+  const forbiddenPattern = new RegExp(forbiddenTerms.join('|'), 'g')
+  const matches: string[] = []
+
+  for (const path of sourcePaths) {
+    if (path === 'examples/macwright.ts') {
+      continue
+    }
+
+    const source = await fs.readFile(path, 'utf8')
+
+    for (const match of source.matchAll(forbiddenPattern)) {
+      matches.push(`${path}: ${match[0]}`)
+    }
+  }
+
+  expect(matches).toEqual([])
+})
+
 test('video fast-forward maxDuration is resolved after dead-air removal', () => {
-  const segments = peekabooComputerVideoTestInternals.tightVideoSegments({
+  const segments = macwrightVideoTestInternals.tightVideoSegments({
     deadAir: [{ start: 5_000, end: 15_000 }],
     fastForward: [{ start: 0, end: 20_000, maxDuration: '5s' }],
     finalEnd: 20_000,
@@ -61,7 +96,7 @@ test('video fast-forward maxDuration is resolved after dead-air removal', () => 
 })
 
 test('video fast-forward metadata preserves user intent', () => {
-  const spans = peekabooComputerVideoTestInternals.normalizeVideoFastForwardSpans([
+  const spans = macwrightVideoTestInternals.normalizeVideoFastForwardSpans([
     { start: 30, end: 40, speed: '2.5x' },
     { start: 10, end: 20, maxDuration: '2s' },
   ])
@@ -73,7 +108,7 @@ test('video fast-forward metadata preserves user intent', () => {
 })
 
 test('type autozoom can end before the final frame', () => {
-  const spans = peekabooComputerVideoTestInternals.normalizeVideoZoomEvents(
+  const spans = macwrightVideoTestInternals.normalizeVideoZoomEvents(
     [
       {
         height: 170,
@@ -103,7 +138,7 @@ test('type autozoom can end before the final frame', () => {
 })
 
 test('hover autozoom ends at the recorded break', () => {
-  const spans = peekabooComputerVideoTestInternals.normalizeVideoZoomEvents(
+  const spans = macwrightVideoTestInternals.normalizeVideoZoomEvents(
     [
       {
         height: 170,
@@ -132,12 +167,12 @@ test('hover autozoom ends at the recorded break', () => {
 })
 
 test('type autozoom is projected onto the tightened video timeline', () => {
-  const segments = peekabooComputerVideoTestInternals.tightVideoSegments({
+  const segments = macwrightVideoTestInternals.tightVideoSegments({
     deadAir: [{ start: 4_000, end: 10_000 }],
     fastForward: [],
     finalEnd: 12_000,
   })
-  const zooms = peekabooComputerVideoTestInternals.projectVideoZoomSpans(
+  const zooms = macwrightVideoTestInternals.projectVideoZoomSpans(
     [
       {
         height: 170,
@@ -153,7 +188,7 @@ test('type autozoom is projected onto the tightened video timeline', () => {
   )
 
   expect({
-    duration: peekabooComputerVideoTestInternals.tightVideoTimelineDuration(segments),
+    duration: macwrightVideoTestInternals.tightVideoTimelineDuration(segments),
     zooms,
   }).toMatchObject({
     duration: 6_000,
@@ -172,7 +207,7 @@ test('type autozoom is projected onto the tightened video timeline', () => {
 })
 
 test('autozoom animates scale per frame', () => {
-  const filter = peekabooComputerVideoTestInternals.autozoomVideoFilter({
+  const filter = macwrightVideoTestInternals.autozoomVideoFilter({
     finalEnd: 5_000,
     inputLabel: '[0:v]',
     videoBounds: { height: 800, width: 1_200 },

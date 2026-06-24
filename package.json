@@ -7,15 +7,13 @@
     "typecheck": "tsc --noEmit",
     "verify": "pnpm typecheck && pnpm test",
     "demo:small": "vitest run examples/small-computer-demo.test.ts",
-    "demo:small:strict": "DEMO_MODE=strict vitest run examples/small-computer-demo.test.ts",
-    "demo:small:update": "DEMO_MODE=update vitest run examples/small-computer-demo.test.ts",
-    "demo:tsc-cursor": "vitest run examples/tsc-cursor-demo.test.ts",
-    "demo:tsc-cursor:typed": "vitest run examples/tsc-cursor-typed-demo.test.ts"
+    "demo:tsc-cursor": "vitest run examples/tsc-cursor.test.ts",
+    "demo:sqlfu": "vitest run examples/sqlfu.test.ts",
+    "demo:x": "vitest run examples/x.test.ts"
   },
   "devDependencies": {
     "@types/node": "^25.9.1",
     "dedent": "1.7.2",
-    "ts-morph": "^27.0.2",
     "type-fest": "5.7.0",
     "typescript": "^5.9.3",
     "vitest": "^4.0.14"
