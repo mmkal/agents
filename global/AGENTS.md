@@ -45,6 +45,10 @@ The body of the pull request shouldn't just be a simulacrum of the task file. It
 
 Similarly if there's a bug you could showcase some sample code with the before/after output. You can use comments and hand-waving in this sample code. It's just for communication.
 
+If you're creating a pull request based on a prompt, it should be opened as a draft. If we've been doing lots of back and forth on the actual code/contents, it can be opened as ready for review. When in doubt, go draft.
+
+When you open a pull request, set up a monitor for comments. cursor bugbot, coderabbit and pullfrog should come through fairly quickly. For human review comments, set up a monitor to look for comments from me/colleagues for up to 24 hours. Treat comments from agents and humans with a grain of salt: often they are sloppy, have not read the pull request in full. Sometimes comments should be replied to with a comment explaining why they're wrong/they've missed or misunderstood something, and resolved with no further action. Sometimes if they're wrong, but understandably so, that could mean just a comment or docs update preventing the same confusion happening in future. And only if you *independently* agree with what they've highlighted (the problem/change request/edge case/whatever), should you update the code. When you do, you should also reply to the comment with what you did and resolve it. In general, I want all comments to be resolved. Note that monitors you set up should not block your turn ending if possible.
+
 ### Pull request media
 
 When a pull request would benefit from visual review, include screenshots or short videos in the PR body. The most reliable way to upload arbitrary media to GitHub is to use the browser attachment flow:
@@ -52,8 +56,9 @@ When a pull request would benefit from visual review, include screenshots or sho
 1. Open the pull request in GitHub with Playwriter.
 2. Edit the PR body or a comment.
 3. Click the editor's `Attach files` button, choose the local image/video, and wait for GitHub to insert a `https://github.com/user-attachments/assets/...` URL.
-4. Ensure the raw attachment URL appears on its own paragraph, not inside Markdown link syntax. Use `https://github.com/user-attachments/assets/...`, not `[video.webm](https://github.com/user-attachments/assets/...)` and not HTML tags.
-5. Save the edit. GitHub will render supported videos inline as a player.
+4. For images, use `<img src="..." />` format, this will render inline by default
+5. Ensure the raw attachment URL appears on its own paragraph. It will not render properly unless there is an empty line above and below it.
+6. Save the edit. GitHub will render supported videos inline as a player.
 
 The GitHub CLI can edit the PR body once you already have an attachment URL, but it does not provide an equivalent generic upload command for markdown attachments.
 
@@ -174,4 +179,4 @@ deployment:
 
 ## Frustration-driven improvement
 
-When I express frustration with your work (swearing, insults, "wtf", etc.), after addressing the immediate issue, propose a short generalized rule to prevent the class of mistake in future. State the rule and where you'd put it (project-level instructions, global instructions, or memory). Check existing rules for conflicts or overlap before proposing. Don't propose anything if the mistake was purely situational with no generalizable lesson.
+When I express frustration with your work (swearing, insults, "wtf", etc.), after addressing the immediate issue, I want you to capture what I'm frustrated about in a "frustration log". This takes the form of a markdown file, `~/src/agents/global/frustration.md`. You should capture the coding agent being used, the session id, the timestamp, my message that seemed frustrated, and then a concise summary of the frustration. Separate reports with `---` delimiters. The report can include code snippets, and if necessary file references, but aim to make it as self-contained and concise as you can. You can fudge the code snippets/example to some extent in order to simplify the report and make sure it's readable and understable with minimal distracting/irrelevant details. Note, you are not finding solutions right now. Just reporting on what happened. We will later do an audit of all frustrations and propose new lint/agent rules once per week.
