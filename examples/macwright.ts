@@ -592,7 +592,13 @@ class MacAutomationServer {
     await this.post('/window/close', { windowId })
   }
 
-  async moveWindow(options: { windowId: number; x: number; y: number }) {
+  async moveWindow(options: {
+    height: number
+    width: number
+    windowId: number
+    x: number
+    y: number
+  }) {
     await this.post('/window/move', options)
   }
 
@@ -3202,7 +3208,9 @@ final class AutomationServer {
       try moveWindow(
         id: requiredInt(body, "windowId"),
         x: requiredDouble(body, "x"),
-        y: requiredDouble(body, "y")
+        y: requiredDouble(body, "y"),
+        width: requiredDouble(body, "width"),
+        height: requiredDouble(body, "height")
       )
       return ["ok": true]
     case "/screens":
@@ -3456,18 +3464,26 @@ final class AutomationServer {
     throw ServerError("window close button not found: \\(id)")
   }
 
-  private func moveWindow(id: Int, x: Double, y: Double) throws {
+  private func moveWindow(id: Int, x: Double, y: Double, width: Double, height: Double) throws {
     guard let window = axWindow(id: id) else {
       throw ServerError("window not found: \\(id)")
     }
     var position = CGPoint(x: x, y: y)
-    guard let value = AXValueCreate(.cgPoint, &position) else {
+    var size = CGSize(width: width, height: height)
+    guard let positionValue = AXValueCreate(.cgPoint, &position),
+      let sizeValue = AXValueCreate(.cgSize, &size) else {
       throw ServerError("could not create AXValue for window move: \\(id)")
     }
-    let result = AXUIElementSetAttributeValue(window, kAXPositionAttribute as CFString, value)
-    if result != .success {
-      throw ServerError("window move failed: \\(id) (AXError \\(result.rawValue))")
+    let positionResult = AXUIElementSetAttributeValue(window, kAXPositionAttribute as CFString, positionValue)
+    if positionResult != .success {
+      throw ServerError("window move failed: \\(id) (AXError \\(positionResult.rawValue))")
     }
+    let sizeResult = AXUIElementSetAttributeValue(window, kAXSizeAttribute as CFString, sizeValue)
+    if sizeResult != .success {
+      throw ServerError("window resize failed: \\(id) (AXError \\(sizeResult.rawValue))")
+    }
+    // Resizing can shift the window (e.g. clamping to the menu bar); position again to settle.
+    AXUIElementSetAttributeValue(window, kAXPositionAttribute as CFString, positionValue)
   }
 
   private func screensPayload() -> [[String: Any]] {
