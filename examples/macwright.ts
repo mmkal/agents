@@ -1315,36 +1315,45 @@ export class Macwright
     return this.screenBounds
   }
 
+  // Fill the target screen so window geometry is deterministic instead of
+  // whatever size the app last remembered. macOS clamps the frame below the
+  // menu bar, so requesting the full screen bounds effectively maximizes.
   private async moveWindowToTargetScreen(
     app: string,
     window: AutomationWindowInfo,
   ): Promise<AutomationWindowInfo> {
     const screen = await this.primaryScreenBounds()
 
-    if (screenContainsWindowCenter(screen, window.bounds)) {
-      return window
-    }
-
     await this.automation.moveWindow({
+      height: screen.height,
+      width: screen.width,
       windowId: window.window_id,
-      x: Math.round(screen.x + Math.max(0, (screen.width - window.bounds.width) / 2)),
-      y: Math.round(screen.y + Math.max(0, (screen.height - window.bounds.height) / 2)),
+      x: screen.x,
+      y: screen.y,
     })
+
+    let previousBounds: PeekabooBounds | undefined
 
     for (let attempt = 0; attempt < 20; attempt += 1) {
       const updated = (await listAutomationWindows(this, app)).find(
         (candidate) => candidate.window_id === window.window_id,
       )
 
-      if (updated && screenContainsWindowCenter(screen, updated.bounds)) {
+      if (
+        updated &&
+        previousBounds &&
+        screenContainsWindowCenter(screen, updated.bounds) &&
+        boundsEqual(updated.bounds, previousBounds)
+      ) {
         return updated
       }
 
+      previousBounds = updated?.bounds
       await sleep(100)
     }
 
     throw new Error(
-      `Window ${window.window_id} (${app}) did not move to the target screen at ${screen.x},${screen.y}`,
+      `Window ${window.window_id} (${app}) did not settle on the target screen at ${screen.x},${screen.y}`,
     )
   }
 
@@ -5998,6 +6007,15 @@ function targetScreenBounds(
     x: chosen.x,
     y: chosen.y,
   }
+}
+
+function boundsEqual(left: PeekabooBounds, right: PeekabooBounds) {
+  return (
+    left.x === right.x &&
+    left.y === right.y &&
+    left.width === right.width &&
+    left.height === right.height
+  )
 }
 
 function screenContainsWindowCenter(screen: ScreenBounds, bounds: PeekabooBounds) {
