@@ -40,3 +40,12 @@ session: unknown
 timestamp: 2026-06-30T15:18:00Z
 message: "no no no. it needs to be actually correct. i think you need to just get cleverer about how to do this efficiently ... no stupid heuristics of what to skip. all of your skipping/shortcut suggestions are terrible"
 summary: The agent tried to improve performance for no-pointless-casts by filtering out `as const` assertions, which narrowed the rule instead of preserving the requested exact semantics. The frustration is about substituting heuristics/skips for a correct, efficient algorithm.
+
+---
+
+**Agent:** Claude Code (Fable 5)
+**Session:** 6529802c-d963-443b-9385-8c30e3662248
+**Timestamp:** 2026-07-07T17:35Z
+**Message:** PR review comment on a new skill file, suggesting deletion of the sentence "Written caveman-style: terse on purpose, all substance kept." — comment body: "ffs"
+
+**Summary:** Asked to write a skill doc in mattpocock caveman-compressed style, the agent added a self-referential meta-commentary line announcing the style ("Written caveman-style: terse on purpose, all substance kept"). The style should just be used, not narrated — same failure mode as writing "this comment explains why" comments. Style instructions describe HOW to write, and the artifact should never mention its own style.
