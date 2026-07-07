@@ -285,6 +285,17 @@ type AutomationWindowInfo = {
   window_title: string
 }
 
+type AutomationScreenInfo = {
+  height: number
+  id: number
+  isMain: boolean
+  width: number
+  x: number
+  y: number
+}
+
+type DisplayPreference = 'primary' | 'secondary'
+
 type AutomationOcrPayload = {
   image: {
     height: number
@@ -581,6 +592,14 @@ class MacAutomationServer {
     await this.post('/window/close', { windowId })
   }
 
+  async moveWindow(options: { windowId: number; x: number; y: number }) {
+    await this.post('/window/move', options)
+  }
+
+  async screens() {
+    return await this.post<{ screens: AutomationScreenInfo[] }>('/screens', {})
+  }
+
   async captureScreen(path: string) {
     return await this.post<AutomationImageCapture>('/image/screen', { path })
   }
@@ -850,7 +869,10 @@ export class Macwright
   private screenCaptureIndex = 0
   private stepId = 0
 
-  static async create(slug = 'macwright-demo') {
+  static async create(
+    slug = 'macwright-demo',
+    options: { display?: DisplayPreference } = {},
+  ) {
     slug = slugify(slug)
     const parent = mkdtempSync(join(tmpdir(), `${slug}-`))
     const directory = join(parent, slug)
@@ -873,6 +895,9 @@ export class Macwright
       if (missingPermission) {
         throw new Error(`${missingPermission.name} permission is not granted. Enable it for the current terminal/editor in System Settings > Privacy & Security.`)
       }
+
+      const {screens} = await computer.automation.screens()
+      computer.screenBounds = targetScreenBounds(screens, options.display || 'secondary')
 
       const initialUserActionState = await computer.readUserActionState()
       if (initialUserActionState.foregroundApp === 'loginwindow') {
@@ -1120,13 +1145,16 @@ export class Macwright
         )
 
         await this.automation.open({ app, target: resolvedTarget })
-        const automationWindow = await waitForExternalAutomationWindow(
-          this,
+        const automationWindow = await this.moveWindowToTargetScreen(
           app,
-          {
-            excludeWindowIds: previousWindowIds,
-            windowTitle: options.windowTitle,
-          },
+          await waitForExternalAutomationWindow(
+            this,
+            app,
+            {
+              excludeWindowIds: previousWindowIds,
+              windowTitle: options.windowTitle,
+            },
+          ),
         )
 
         return new PeekabooWindow({
@@ -1155,11 +1183,14 @@ export class Macwright
       }
 
       await this.automation.open({ app, target: resolvedTarget })
-      const automationWindow = await waitForAutomationWindow(
-        this,
+      const automationWindow = await this.moveWindowToTargetScreen(
         app,
-        windowTitle,
-        { excludeWindowIds: previousWindowIds },
+        await waitForAutomationWindow(
+          this,
+          app,
+          windowTitle,
+          { excludeWindowIds: previousWindowIds },
+        ),
       )
 
       return new PeekabooWindow({
@@ -1276,6 +1307,39 @@ export class Macwright
     this.screenBounds = (await this.automation.captureScreen(imagePath)).bounds
 
     return this.screenBounds
+  }
+
+  private async moveWindowToTargetScreen(
+    app: string,
+    window: AutomationWindowInfo,
+  ): Promise<AutomationWindowInfo> {
+    const screen = await this.primaryScreenBounds()
+
+    if (screenContainsWindowCenter(screen, window.bounds)) {
+      return window
+    }
+
+    await this.automation.moveWindow({
+      windowId: window.window_id,
+      x: Math.round(screen.x + Math.max(0, (screen.width - window.bounds.width) / 2)),
+      y: Math.round(screen.y + Math.max(0, (screen.height - window.bounds.height) / 2)),
+    })
+
+    for (let attempt = 0; attempt < 20; attempt += 1) {
+      const updated = (await listAutomationWindows(this, app)).find(
+        (candidate) => candidate.window_id === window.window_id,
+      )
+
+      if (updated && screenContainsWindowCenter(screen, updated.bounds)) {
+        return updated
+      }
+
+      await sleep(100)
+    }
+
+    throw new Error(
+      `Window ${window.window_id} (${app}) did not move to the target screen at ${screen.x},${screen.y}`,
+    )
   }
 
   async topMenuBarRegion(): Promise<ScreenBounds> {
@@ -3134,6 +3198,15 @@ final class AutomationServer {
     case "/window/close":
       try closeWindow(id: requiredInt(body, "windowId"))
       return ["ok": true]
+    case "/window/move":
+      try moveWindow(
+        id: requiredInt(body, "windowId"),
+        x: requiredDouble(body, "x"),
+        y: requiredDouble(body, "y")
+      )
+      return ["ok": true]
+    case "/screens":
+      return ["screens": screensPayload()]
     case "/image/screen":
       let path = requiredString(body, "path")
       let bounds = try captureScreen(path: path)
@@ -3381,6 +3454,39 @@ final class AutomationServer {
       return
     }
     throw ServerError("window close button not found: \\(id)")
+  }
+
+  private func moveWindow(id: Int, x: Double, y: Double) throws {
+    guard let window = axWindow(id: id) else {
+      throw ServerError("window not found: \\(id)")
+    }
+    var position = CGPoint(x: x, y: y)
+    guard let value = AXValueCreate(.cgPoint, &position) else {
+      throw ServerError("could not create AXValue for window move: \\(id)")
+    }
+    let result = AXUIElementSetAttributeValue(window, kAXPositionAttribute as CFString, value)
+    if result != .success {
+      throw ServerError("window move failed: \\(id) (AXError \\(result.rawValue))")
+    }
+  }
+
+  private func screensPayload() -> [[String: Any]] {
+    var displayCount: UInt32 = 0
+    CGGetActiveDisplayList(0, nil, &displayCount)
+    var displays = [CGDirectDisplayID](repeating: 0, count: Int(displayCount))
+    CGGetActiveDisplayList(displayCount, &displays, &displayCount)
+    let mainDisplay = CGMainDisplayID()
+    return displays.map { display in
+      let bounds = CGDisplayBounds(display)
+      return [
+        "id": Int(display),
+        "isMain": display == mainDisplay,
+        "x": bounds.origin.x,
+        "y": bounds.origin.y,
+        "width": bounds.size.width,
+        "height": bounds.size.height,
+      ]
+    }
   }
 
   private func captureScreen(path: String) throws -> [String: Any] {
@@ -5853,6 +5959,41 @@ async function listAutomationWindows(
 ): Promise<AutomationWindowInfo[]> {
   const payload = await parent.automation.windows(app)
   return payload.windows
+}
+
+function targetScreenBounds(
+  screens: AutomationScreenInfo[],
+  display: DisplayPreference,
+): ScreenBounds {
+  const main = screens.find((screen) => screen.isMain) || screens[0]
+  const largestSecondary = screens
+    .filter((screen) => !screen.isMain)
+    .sort((left, right) => right.width * right.height - left.width * left.height)[0]
+  const chosen = display === 'secondary' ? largestSecondary || main : main
+
+  if (!chosen) {
+    throw new Error('No screens found')
+  }
+
+  return {
+    height: chosen.height,
+    relativeTo: 'screen',
+    width: chosen.width,
+    x: chosen.x,
+    y: chosen.y,
+  }
+}
+
+function screenContainsWindowCenter(screen: ScreenBounds, bounds: PeekabooBounds) {
+  const centerX = bounds.x + bounds.width / 2
+  const centerY = bounds.y + bounds.height / 2
+
+  return (
+    centerX >= screen.x &&
+    centerX < screen.x + screen.width &&
+    centerY >= screen.y &&
+    centerY < screen.y + screen.height
+  )
 }
 
 function isExternalWindowCandidate(_app: string, window: AutomationWindowInfo) {
