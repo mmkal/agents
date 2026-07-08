@@ -35,7 +35,7 @@ If I ask you to "worktreeify" a task, it's essentially the above process: create
 
 When you think you're done with a task that has a branch/pull request, move it to complete on that branch and update the pull request body. I might still give you more work to do - that's ok, it'll only be in the `complete` folder when we merge.
 
-Much of my day is often taken up reviewing and iterating on your bedtime work. I'll do this via a mixture of GitHub comments and direct prompting to you. When I leave comments, you should reply to them but start your replies with "🤖" because it looks otherwise like me talking to me. Always resolve comments once you've handled them (which could mean accepting their premise, and making a change accordingly or it might mean replying saying "you are wrong about that").
+Much of my day is often taken up reviewing and iterating on your bedtime work. I'll do this via a mixture of GitHub comments and direct prompting to you. When I leave comments, you should reply to them but start your replies with "🤖" because it looks otherwise like me talking to me. As soon as you see a comment, react to it with 👀 so I know it's been picked up, and remove the 👀 reaction once you've replied. Always resolve comments once you've handled them (which could mean accepting their premise, and making a change accordingly or it might mean replying saying "you are wrong about that").
 
 ## Pull requests
 
