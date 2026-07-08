@@ -49,3 +49,12 @@ summary: The agent tried to improve performance for no-pointless-casts by filter
 **Message:** PR review comment on a new skill file, suggesting deletion of the sentence "Written caveman-style: terse on purpose, all substance kept." — comment body: "ffs"
 
 **Summary:** Asked to write a skill doc in mattpocock caveman-compressed style, the agent added a self-referential meta-commentary line announcing the style ("Written caveman-style: terse on purpose, all substance kept"). The style should just be used, not narrated — same failure mode as writing "this comment explains why" comments. Style instructions describe HOW to write, and the artifact should never mention its own style.
+
+---
+
+**Agent:** Claude Code (Fable 5)
+**Session:** 87530d7b-6b93-4143-9407-dc079a6d0fd1
+**Timestamp:** 2026-07-08T07:05Z
+**Message:** "Yeah asshole do a new recording like I told you to"
+
+**Summary:** Misha asked for a demo recording on PR #1736 via a GitHub comment ("Do a recording pls"). The recording was captured, but the upload leg failed 3× (browser-extension GIF export flake), so the agent shipped the PR with the old, outdated GIF plus a "predates this change" note and merely *offered* to retry ("Say the word and I'll take a fresh run at it"). Misha had already said the word — the original comment was the instruction. Treating a repeated explicit request as something to re-offer instead of just doing it (especially after behavior-changing code updates made the old GIF actively misleading) reads as laziness. When an instruction fails on a flaky path, exhaust alternative routes (different upload mechanism, API-based hosting, re-record) before downgrading the instruction to an offer. (Root cause discovered later: the Mac screen was locked, which silently breaks every native-dialog/file-picker path; a `gh-attach-assets` release exists in iterate/iterate exactly for hosting media via API when the browser flow is unavailable.)
