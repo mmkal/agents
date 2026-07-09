@@ -1,10 +1,12 @@
 import dedent from 'dedent'
 import { expect, test } from 'vitest'
 import { Macwright } from './macwright.ts'
+import { tartify } from './tart.ts'
 
 const sqlfuPackageRoot = '/Users/mmkal/src/sqlfu/packages/sqlfu'
 
-test('sqlfu demo', async () => {
+// Runs locally by default; MACWRIGHT_TART=1 reruns it inside a tart VM (see tart.ts).
+test('sqlfu demo', tartify({ image: 'macwright-golden', sync: [sqlfuPackageRoot] }, async () => {
   await using computer = await Macwright.create(expect.getState().currentTestName)
   computer.on('step:start', ({ title }) => {
     void computer.say(title.replace('tsc', 'T.S.C')).catch(() => {})
@@ -155,7 +157,7 @@ test('sqlfu demo', async () => {
 
   const path = await video.save()
   console.log('video saved to', path + '/tight.mp4')
-}, 240_000)
+}), process.env.MACWRIGHT_TART ? 1_800_000 : 240_000)
 
 const postsObjectSource = dedent`
   import {DurableObject} from 'cloudflare:workers';
