@@ -62,6 +62,18 @@ When a pull request would benefit from visual review, include screenshots or sho
 
 The GitHub CLI can edit the PR body once you already have an attachment URL, but it does not provide an equivalent generic upload command for markdown attachments.
 
+Key fact: a real inline `<video>` **player** only comes from a `github.com/user-attachments/assets/...` URL (minted by the editor attachment upload). GitHub **sanitises `<video>` tags that point at any other host**, so a release-download `.mp4` (or any external URL) can only ever render as a *link*, never a player. GIFs render inline as images from any URL, which is why the release-asset trick falls back to GIF for motion. Don't waste time trying to embed a release-hosted mp4 as a video — it won't work.
+
+If the `Attach files` picker / file-upload tool can't be driven (e.g. a broken/mismatched `file_upload` MCP tool that rejects host paths, or a headless run), inject the file into the editor programmatically instead of handing the manual drag back to me — the whole point is to automate it:
+
+1. `base64 -i clip.mp4 | tr -d '\n' > clip.b64`, then `pbcopy < clip.b64` to put the base64 on the clipboard as **text**. Keep the clip small (re-encode, e.g. `ffmpeg -vf scale=960 -crf 30`) so the paste stays snappy.
+2. Real `cmd+v` (the computer/keyboard tool, not a synthetic event) into the GitHub comment textarea (`#new_comment_field`). Plain-text paste needs no permission. **Do not** use `navigator.clipboard.readText()` — it hangs on Chrome's clipboard-permission prompt and times out the JS eval.
+3. In page JS: read the textarea value (verify it with a sha256 against a shell-computed hash so any corruption is caught), then `atob` → `Uint8Array` → `new File([bytes], 'clip.mp4', { type: 'video/mp4' })`.
+4. Clear the textarea (native value setter + dispatch `input`), then assign the `<file-attachment>` element's hidden input (`#fc-new_comment_field`): `input.files = dataTransfer.files` and dispatch `input` + `change`. GitHub uploads it and inserts the `user-attachments/assets/<uuid>` URL into the textarea.
+5. Read that URL back, **don't submit the comment** (the asset is already permanent), and place the bare URL on its own line in the PR body via `gh pr edit --body-file`. Verify with `gh api repos/O/R/pulls/N -H "Accept: application/vnd.github.html+json" --jq .body_html | grep '<video'`.
+
+General principle: when a tool is broken, exhaust programmatic workarounds before offloading a manual step back to me.
+
 ## Making changes
 
 If I ask you an informational *question*, you should not assume that means I want changes. For example, if I ask "why did you do XYZ instead of ABC?", you should *tell me* why you did XYZ", even if that answer is "because I'm a stupid clanker". You can *offer* to do ABC, or tell me the tradeoffs, or how long you think it would take, but don't do it if all I've done is ask you a question. Same goes for "what do you think of this?" and you find it's wrong or not working. Tell me it's wrong or not working and offer to fix it, don't fix it right away. (Of course if I ask a question like "Can you do this please?" you can do it).
