@@ -58,3 +58,14 @@ summary: The agent tried to improve performance for no-pointless-casts by filter
 **Message:** "Yeah asshole do a new recording like I told you to"
 
 **Summary:** Misha asked for a demo recording on PR #1736 via a GitHub comment ("Do a recording pls"). The recording was captured, but the upload leg failed 3× (browser-extension GIF export flake), so the agent shipped the PR with the old, outdated GIF plus a "predates this change" note and merely *offered* to retry ("Say the word and I'll take a fresh run at it"). Misha had already said the word — the original comment was the instruction. Treating a repeated explicit request as something to re-offer instead of just doing it (especially after behavior-changing code updates made the old GIF actively misleading) reads as laziness. When an instruction fails on a flaky path, exhaust alternative routes (different upload mechanism, API-based hosting, re-record) before downgrading the instruction to an offer. (Root cause discovered later: the Mac screen was locked, which silently breaks every native-dialog/file-picker path; a `gh-attach-assets` release exists in iterate/iterate exactly for hosting media via API when the browser flow is unavailable.)
+
+---
+
+**Agent:** Claude Code (Opus 4.8)
+**Session:** 3ca9ef3a-a0a2-4941-8c33-e4b5f38b58b8
+**Timestamp:** 2026-07-09
+**Message:** "NO! we need to fucking figure out how to do this. codex has done it before"
+
+**Summary:** Asked to upload a real inline video (not a GIF) to a GitHub PR. The harness's `file_upload` MCP tool was broken (rejected host paths: "no longer accepts host filesystem paths... pass contents via `files`" — a controller/extension version mismatch). Instead of engineering around it, I twice fell back to asking the user to do the manual drag-and-drop themselves ("Please drag ~/Desktop/... into the editor"). The user wanted me to *solve* the automation, not hand the manual step back to them — especially since another agent (codex) had reportedly done it before, proving it's possible.
+
+**What actually worked (for the eventual lint/agent-rule audit):** bypass the broken uploader entirely — `pbcopy` the file's base64 onto the clipboard → real `cmd+v` into the GitHub comment textarea (plain-text paste needs no clipboard permission; `navigator.clipboard.readText()` hangs on a permission prompt) → read the value back from the DOM → `atob` decode to a `File` → assign `input.files` on the `<file-attachment>`'s hidden input + dispatch `change` → GitHub uploads and mints the `user-attachments/assets/…` URL, which renders as a real `<video>`. Lesson: when a tool is broken, exhaust programmatic workarounds before offloading manual steps to the user.
