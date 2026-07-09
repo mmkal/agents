@@ -69,3 +69,12 @@ summary: The agent tried to improve performance for no-pointless-casts by filter
 **Summary:** Asked to upload a real inline video (not a GIF) to a GitHub PR. The harness's `file_upload` MCP tool was broken (rejected host paths: "no longer accepts host filesystem paths... pass contents via `files`" — a controller/extension version mismatch). Instead of engineering around it, I twice fell back to asking the user to do the manual drag-and-drop themselves ("Please drag ~/Desktop/... into the editor"). The user wanted me to *solve* the automation, not hand the manual step back to them — especially since another agent (codex) had reportedly done it before, proving it's possible.
 
 **What actually worked (for the eventual lint/agent-rule audit):** bypass the broken uploader entirely — `pbcopy` the file's base64 onto the clipboard → real `cmd+v` into the GitHub comment textarea (plain-text paste needs no clipboard permission; `navigator.clipboard.readText()` hangs on a permission prompt) → read the value back from the DOM → `atob` decode to a `File` → assign `input.files` on the `<file-attachment>`'s hidden input + dispatch `change` → GitHub uploads and mints the `user-attachments/assets/…` URL, which renders as a real `<video>`. Lesson: when a tool is broken, exhaust programmatic workarounds before offloading manual steps to the user.
+
+---
+
+**Agent:** Claude Code (Opus 4.8)
+**Session:** 3ca9ef3a-a0a2-4941-8c33-e4b5f38b58b8
+**Timestamp:** 2026-07-09
+**Message:** "ffs bro you fucking nob. don't put a fucking four line comment explaining why there's no trimStart. we don't have to have a fuckin diff on the file"
+
+**Summary:** After designing a library default (`trimStart: "auto"`) whose entire selling point is that consumers get the feature *by bumping the version with no config change*, I then added a 4-line comment to the consumer's `videoMode({...})` config explaining "no trimStart here on purpose…". That reintroduced a diff on the exact file that was supposed to stay untouched — undercutting the whole point of the default and adding noise. The right outcome was **zero diff** on `test.ts`; the only changes should be the dependency bump. Lesson: when the value of a change is "no change needed here", do not annotate the non-change — an explanatory comment IS a change. Keep the diff empty; put the rationale in the PR/commit, not the source file.
