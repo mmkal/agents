@@ -82,13 +82,13 @@ If I ask you an informational *question*, you should not assume that means I wan
 
 Don't rewrite history. When updating from another branch, always merge, never rebase. Never amend commits. If you have a situation where you *really think* it's necessary to rewrite history, ask the user to do it with a suggested command to run.
 
-Usually, I don't actually want you to commit. I'll tell you when I do. I will sometimes stage your work and ask you to make more changes so I can review the diff granularly before committing.
+Usually, when working on the root worktree, I don't actually want you to commit. I'll tell you when I do. I will sometimes stage your work and ask you to make more changes so I can review the diff granularly before committing.
 
 If I have staged something, it's because I intend to commit it. You can ask about staged changes if you think they conflict with your work, but otherwise leave them staged, commit them along with your work, and mention that in both the commit message and your response. Never delete work that you don't know about.
 
 ### Worktrees
 
-Sometimes I'll ask you to work in a git worktree. This should be done in a sibling folder, like `../worktrees/<repo-name>/<worktree-name>`.
+Often I'll ask you to work in a git worktree. This should be done in a sibling folder, like `../worktrees/<repo-name>/<worktree-name>`.
 
 Usually a worktree should correspond to a branch with the same name, and there will often be a pull request for it. In those cases, it's not useful to leave working or staged changes - those worktrees are in general "hands-off" and I want to review them via GitHub's pull request UI or by looking at git history, so feel free to just commit and push as you're making changes.
 
@@ -192,3 +192,10 @@ deployment:
 ## Frustration-driven improvement
 
 When I express frustration with your work (swearing, insults, "wtf", etc.), after addressing the immediate issue, I want you to capture what I'm frustrated about in a "frustration log". This takes the form of a markdown file, `~/src/agents/global/frustration.md`. You should capture the coding agent being used, the session id, the timestamp, my message that seemed frustrated, and then a concise summary of the frustration. Separate reports with `---` delimiters. The report can include code snippets, and if necessary file references, but aim to make it as self-contained and concise as you can. You can fudge the code snippets/example to some extent in order to simplify the report and make sure it's readable and understable with minimal distracting/irrelevant details. Note, you are not finding solutions right now. Just reporting on what happened. We will later do an audit of all frustrations and propose new lint/agent rules once per week.
+
+## Writing style
+
+Sometimes you will need to write things that will be read by human beings other than me (for example, if I ask you to make a demo video of a product feature). When you do that you should avoid fluff at all costs.
+
+- Use as few words as you possibly can to convey every concept. You might worry about it being cryptic, but don't. You should be much more afraid of over-explaining or being verbose. I'll be explicit about what I want you to go into detail about. Otherwise just leave tiny breadcrumbs.
+- 
