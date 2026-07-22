@@ -18,7 +18,7 @@ Regenerate doc each round. Not append-only. No transcript. Stable headings, stab
 
 ## Loop
 
-1. Build doc per round structure. Present via `ExitPlanMode`. Plannotator opens in browser.
+1. Build doc per round structure. Present via `ExitPlanMode`. Plannotator opens in browser. Send the plannotator URL for each round in the chat too.
 2. User annotates page:
    - Comment on Question block = answer.
    - No comment on Question block = recommended answer accepted.
