@@ -195,3 +195,12 @@ timestamp: 2026-07-21T22:54:16+01:00
 message: "argh it's crashing again! does it also have the fix from the other branch in that one?"
 
 Summary: Codex created the approval-provenance worktree and Metro server from `main` even though the separately reviewed mobile startup-crash fix remained unmerged in PR #2225. Merging latest `main` therefore did not include the React Native WebSocket string fix, and the physical-device test repeated the already-diagnosed native SIGABRT. Before handing off a mobile test worktree, explicitly check whether still-open prerequisite fixes are ancestors of the branch and either stack them or warn that the known crash remains.
+
+---
+
+coding_agent: Codex (GPT-5)
+session_id: unavailable
+timestamp: 2026-07-22T15:31:14+01:00
+message: 'get rid of compatiability shit "Compatibility with approval events written before body metadata was consolidated"'
+
+Summary: Codex added multiple compatibility readers and tests for a short-lived approval event shape while implementing an immediate follow-up to the PR that introduced it. This created legacy casts, optional nested hashes, native fallbacks, and signature-equivalence coverage even though the desired design was a clean cutover to one consolidated body contract.
