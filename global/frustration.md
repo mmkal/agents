@@ -177,3 +177,21 @@ timestamp: 2026-07-19T22:23:06+01:00
 message: "Now it shows twice again come on mate! Also this colour theme is hard to see see if you can use something familiar like vscode theme(s)"
 
 Summary: Codex removed duplicate activity code only when the model's fenced response matched the parsed execution code byte-for-byte. Physical-device testing showed the response and parsed code could differ superficially, so both blocks reappeared. The first syntax-highlighting pass also relied on CodeMirror's default token colours against a custom dark background, producing an unfamiliar low-contrast palette. The activity view should choose one canonical execution representation structurally and use a complete, recognizable dark editor theme.
+
+---
+
+coding_agent: Codex (GPT-5)
+session_id: unavailable
+timestamp: 2026-07-21T15:13:43+01:00
+message: "it's still hard crashing but no idea how we could tell if it's getting your latest code or not!"
+
+Summary: Codex asked the user to relaunch against a temporarily simplified root layout, but provided no visible bundle marker or protocol-level evidence that the development client fetched the changed JavaScript. A physical-device diagnostic must make the tested variant unmistakable—use a unique standalone entry screen, restart Metro cleanly, and verify the served manifest names that entry before interpreting the result.
+
+---
+
+coding_agent: Codex (GPT-5)
+session_id: unavailable
+timestamp: 2026-07-21T22:54:16+01:00
+message: "argh it's crashing again! does it also have the fix from the other branch in that one?"
+
+Summary: Codex created the approval-provenance worktree and Metro server from `main` even though the separately reviewed mobile startup-crash fix remained unmerged in PR #2225. Merging latest `main` therefore did not include the React Native WebSocket string fix, and the physical-device test repeated the already-diagnosed native SIGABRT. Before handing off a mobile test worktree, explicitly check whether still-open prerequisite fixes are ancestors of the branch and either stack them or warn that the known crash remains.
