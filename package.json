@@ -9,6 +9,8 @@
     "demo:small": "vitest run examples/small-computer-demo.test.ts",
     "demo:tsc-cursor": "vitest run examples/tsc-cursor.test.ts",
     "demo:sqlfu": "vitest run examples/sqlfu.test.ts",
+    "demo:sqlfu:tart": "MACWRIGHT_TART=1 vitest run examples/sqlfu.test.ts",
+    "demo:trpc-cli": "vitest run examples/trpc-cli.test.ts",
     "demo:x": "vitest run examples/x.test.ts"
   },
   "devDependencies": {

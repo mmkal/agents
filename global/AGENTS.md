@@ -35,7 +35,7 @@ If I ask you to "worktreeify" a task, it's essentially the above process: create
 
 When you think you're done with a task that has a branch/pull request, move it to complete on that branch and update the pull request body. I might still give you more work to do - that's ok, it'll only be in the `complete` folder when we merge.
 
-Much of my day is often taken up reviewing and iterating on your bedtime work. I'll do this via a mixture of GitHub comments and direct prompting to you. When I leave comments, you should reply to them but start your replies with "🤖" because it looks otherwise like me talking to me. Always resolve comments once you've handled them (which could mean accepting their premise, and making a change accordingly or it might mean replying saying "you are wrong about that").
+Much of my day is often taken up reviewing and iterating on your bedtime work. I'll do this via a mixture of GitHub comments and direct prompting to you. When I leave comments, you should reply to them but start your replies with "🤖" because it looks otherwise like me talking to me. As soon as you see a comment, react to it with 👀 so I know it's been picked up, and remove the 👀 reaction once you've replied. Always resolve comments once you've handled them (which could mean accepting their premise, and making a change accordingly or it might mean replying saying "you are wrong about that").
 
 ## Pull requests
 
@@ -62,6 +62,18 @@ When a pull request would benefit from visual review, include screenshots or sho
 
 The GitHub CLI can edit the PR body once you already have an attachment URL, but it does not provide an equivalent generic upload command for markdown attachments.
 
+Key fact: a real inline `<video>` **player** only comes from a `github.com/user-attachments/assets/...` URL (minted by the editor attachment upload). GitHub **sanitises `<video>` tags that point at any other host**, so a release-download `.mp4` (or any external URL) can only ever render as a *link*, never a player. GIFs render inline as images from any URL, which is why the release-asset trick falls back to GIF for motion. Don't waste time trying to embed a release-hosted mp4 as a video — it won't work.
+
+If the `Attach files` picker / file-upload tool can't be driven (e.g. a broken/mismatched `file_upload` MCP tool that rejects host paths, or a headless run), inject the file into the editor programmatically instead of handing the manual drag back to me — the whole point is to automate it:
+
+1. `base64 -i clip.mp4 | tr -d '\n' > clip.b64`, then `pbcopy < clip.b64` to put the base64 on the clipboard as **text**. Keep the clip small (re-encode, e.g. `ffmpeg -vf scale=960 -crf 30`) so the paste stays snappy.
+2. Real `cmd+v` (the computer/keyboard tool, not a synthetic event) into the GitHub comment textarea (`#new_comment_field`). Plain-text paste needs no permission. **Do not** use `navigator.clipboard.readText()` — it hangs on Chrome's clipboard-permission prompt and times out the JS eval.
+3. In page JS: read the textarea value (verify it with a sha256 against a shell-computed hash so any corruption is caught), then `atob` → `Uint8Array` → `new File([bytes], 'clip.mp4', { type: 'video/mp4' })`.
+4. Clear the textarea (native value setter + dispatch `input`), then assign the `<file-attachment>` element's hidden input (`#fc-new_comment_field`): `input.files = dataTransfer.files` and dispatch `input` + `change`. GitHub uploads it and inserts the `user-attachments/assets/<uuid>` URL into the textarea.
+5. Read that URL back, **don't submit the comment** (the asset is already permanent), and place the bare URL on its own line in the PR body via `gh pr edit --body-file`. Verify with `gh api repos/O/R/pulls/N -H "Accept: application/vnd.github.html+json" --jq .body_html | grep '<video'`.
+
+General principle: when a tool is broken, exhaust programmatic workarounds before offloading a manual step back to me.
+
 ## Making changes
 
 If I ask you an informational *question*, you should not assume that means I want changes. For example, if I ask "why did you do XYZ instead of ABC?", you should *tell me* why you did XYZ", even if that answer is "because I'm a stupid clanker". You can *offer* to do ABC, or tell me the tradeoffs, or how long you think it would take, but don't do it if all I've done is ask you a question. Same goes for "what do you think of this?" and you find it's wrong or not working. Tell me it's wrong or not working and offer to fix it, don't fix it right away. (Of course if I ask a question like "Can you do this please?" you can do it).
@@ -70,13 +82,13 @@ If I ask you an informational *question*, you should not assume that means I wan
 
 Don't rewrite history. When updating from another branch, always merge, never rebase. Never amend commits. If you have a situation where you *really think* it's necessary to rewrite history, ask the user to do it with a suggested command to run.
 
-Usually, I don't actually want you to commit. I'll tell you when I do. I will sometimes stage your work and ask you to make more changes so I can review the diff granularly before committing.
+Usually, when working on the root worktree, I don't actually want you to commit. I'll tell you when I do. I will sometimes stage your work and ask you to make more changes so I can review the diff granularly before committing.
 
 If I have staged something, it's because I intend to commit it. You can ask about staged changes if you think they conflict with your work, but otherwise leave them staged, commit them along with your work, and mention that in both the commit message and your response. Never delete work that you don't know about.
 
 ### Worktrees
 
-Sometimes I'll ask you to work in a git worktree. This should be done in a sibling folder, like `../worktrees/<repo-name>/<worktree-name>`.
+Often I'll ask you to work in a git worktree. This should be done in a sibling folder, like `../worktrees/<repo-name>/<worktree-name>`.
 
 Usually a worktree should correspond to a branch with the same name, and there will often be a pull request for it. In those cases, it's not useful to leave working or staged changes - those worktrees are in general "hands-off" and I want to review them via GitHub's pull request UI or by looking at git history, so feel free to just commit and push as you're making changes.
 
@@ -180,3 +192,11 @@ deployment:
 ## Frustration-driven improvement
 
 When I express frustration with your work (swearing, insults, "wtf", etc.), after addressing the immediate issue, I want you to capture what I'm frustrated about in a "frustration log". This takes the form of a markdown file, `~/src/agents/global/frustration.md`. You should capture the coding agent being used, the session id, the timestamp, my message that seemed frustrated, and then a concise summary of the frustration. Separate reports with `---` delimiters. The report can include code snippets, and if necessary file references, but aim to make it as self-contained and concise as you can. You can fudge the code snippets/example to some extent in order to simplify the report and make sure it's readable and understable with minimal distracting/irrelevant details. Note, you are not finding solutions right now. Just reporting on what happened. We will later do an audit of all frustrations and propose new lint/agent rules once per week.
+
+## Writing style
+
+Sometimes you will need to write things that will be read by human beings other than me (for example, if I ask you to make a demo video of a product feature). When you do that you should avoid fluff at all costs.
+
+- Use as few words as you possibly can to convey every concept. You might worry about it being cryptic, but don't. You should be much more afraid of over-explaining or being verbose. I'll be explicit about what I want you to go into detail about. Otherwise just leave tiny breadcrumbs.
+- Avoid long fancy latin-root words. ("get" usually better than "acquire")
+- avoid excessive nested sub-headings. heading if you really need one, then get to the point
