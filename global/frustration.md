@@ -217,3 +217,12 @@ message: |
   "this whole function is so ugly and overcomplicated... just make it work so that this function is simple and just obediently renders the appropriate thing without having to do ten million god damn ternaries"
 
 Summary: Codex wrapped a self-contained approval `body` object in tiny hash/preview helpers, manually projected nearly every request field into an equivalent JSON shape, and built terminal output through nested ternaries and temporary arrays. The result added indirection without policy or reuse value. Callers should read `body` directly, protocol adapters should spread the payload when its shape is already correct, and small renderers should use plain sequential conditionals.
+
+---
+
+coding_agent: Codex (GPT-5)
+session_id: 019f8e76-1eda-7f80-a099-66574bbde9c6
+timestamp: 2026-07-23T12:39:58Z
+message: "i think there's a bug, some weird characters in the caption. also can you please make a somewhat realitic test that has captions from test.step and the captions are meaningful/realistic and not random shit with escape characters. I want someone to be able to read this and for it to click that it's actually useful"
+
+Summary: Codex used the literal caption `Create {an} account\path` to test ASS escaping, then uploaded that artifact as the feature's PR demo. The renderer faithfully displayed the intentionally strange fixture text, making the showcase look broken and obscuring why `test.step` captions are useful. The visual proof should have used a realistic multi-step flow with meaningful titles, while any low-level escaping coverage stayed separate from reviewer-facing media.
