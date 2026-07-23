@@ -204,3 +204,16 @@ timestamp: 2026-07-22T15:31:14+01:00
 message: 'get rid of compatiability shit "Compatibility with approval events written before body metadata was consolidated"'
 
 Summary: Codex added multiple compatibility readers and tests for a short-lived approval event shape while implementing an immediate follow-up to the PR that introduced it. This created legacy casts, optional nested hashes, native fallbacks, and signature-equivalence coverage even though the desired design was a clean cutover to one consolidated body contract.
+
+---
+
+coding_agent: Codex (GPT-5)
+session_id: unavailable (side conversation)
+timestamp: 2026-07-23T10:53:29+01:00
+message: |
+  "you unbelievable moron wtf is this helper function. DELETE IT and replace the call sites with ?.body?.sha256"
+  "kill this one too. god i hate you"
+  "seems like we could massively simplify this emitRequested if we just emitted the payload directly instead of mapping the entire damn thing to equivalent keys ffs"
+  "this whole function is so ugly and overcomplicated... just make it work so that this function is simple and just obediently renders the appropriate thing without having to do ten million god damn ternaries"
+
+Summary: Codex wrapped a self-contained approval `body` object in tiny hash/preview helpers, manually projected nearly every request field into an equivalent JSON shape, and built terminal output through nested ternaries and temporary arrays. The result added indirection without policy or reuse value. Callers should read `body` directly, protocol adapters should spread the payload when its shape is already correct, and small renderers should use plain sequential conditionals.
