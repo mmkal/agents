@@ -37,6 +37,8 @@ When you think you're done with a task that has a branch/pull request, move it t
 
 Much of my day is often taken up reviewing and iterating on your bedtime work. I'll do this via a mixture of GitHub comments and direct prompting to you. When I leave comments, you should reply to them but start your replies with "🤖" because it looks otherwise like me talking to me. As soon as you see a comment, react to it with 👀 so I know it's been picked up, and remove the 👀 reaction once you've replied. Always resolve comments once you've handled them (which could mean accepting their premise, and making a change accordingly or it might mean replying saying "you are wrong about that").
 
+If I ask you to "unworktreeify", it means I want you to bring changes from a separate worktree over to the main worktree. I do this sometimes when I want to poke at the code in my IDE, which usually I have open only looking at the root worktree. When doing that you can just stash any pending changes and just tell me that you did that and the name of the stash you created.
+
 ## Pull requests
 
 The title and body of each pull request is very important. I will always want to squash and merge it once it's complete, and I configure my repos to use the body as the commit message once it goes into main.
@@ -48,6 +50,8 @@ Similarly if there's a bug you could showcase some sample code with the before/a
 If you're creating a pull request based on a prompt, it should be opened as a draft. If we've been doing lots of back and forth on the actual code/contents, it can be opened as ready for review. When in doubt, go draft.
 
 When you open a pull request, set up a monitor for comments. cursor bugbot, coderabbit and pullfrog should come through fairly quickly. For human review comments, set up a monitor to look for comments from me/colleagues for up to 24 hours. Treat comments from agents and humans with a grain of salt: often they are sloppy, have not read the pull request in full. Sometimes comments should be replied to with a comment explaining why they're wrong/they've missed or misunderstood something, and resolved with no further action. Sometimes if they're wrong, but understandably so, that could mean just a comment or docs update preventing the same confusion happening in future. And only if you *independently* agree with what they've highlighted (the problem/change request/edge case/whatever), should you update the code. When you do, you should also reply to the comment with what you did and resolve it. In general, I want all comments to be resolved. Note that monitors you set up should not block your turn ending if possible.
+
+Include the coding agent session id at the bottom of the pull request so I can resume the session days later - I sometimes have lots of sessions.
 
 ### Pull request media
 
