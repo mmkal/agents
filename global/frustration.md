@@ -246,3 +246,21 @@ message: "stop running all the tests with --headed, i only want to see the \"tur
 now, on that one, go through the styles you have and remove ALL of them that aren't necessary. Which is likely nearly all of them. I DO NOT CARE WHAT THIS FAKE APP LOOKS LIKE"
 
 Summary: Codex interpreted a request about the realistic caption demo as a file-wide cleanup, rewrote every pixel-sensitive fixture from stylesheet rules to inline styles, and launched all 16 ffmpeg tests headed. This changed unrelated tests and flooded the user's screen. The request was scoped to one named demo test: only that fixture should be simplified, and only that test should be shown headed.
+
+---
+
+coding_agent: Codex (GPT-5.6)
+session_id: 019f948f-9c73-7d02-b1d1-788391083076
+timestamp: 2026-07-24T17:06:24+01:00
+message: "i still see a few flashes. i think you need to think more deeply about how to fix this properly"
+
+Summary: Codex first shipped a fixed 100 ms pre-action replacement window and declared the video flash fixed after sampled contact-sheet checks. More flashes remained because Playwright's raw WebM timestamps and videoMode's Node timestamps have different origins, and FFmpeg cuts on the recorder's frame grid. The fix needed recorder-clock calibration plus native-rate inspection of every comparison frame, not a larger guessed cutoff.
+
+---
+
+coding_agent: Codex (GPT-5.6)
+session_id: 019f9403-9195-7782-b5d6-b80834ee0eda
+timestamp: 2026-07-24T17:09:28+01:00
+message: "i sent feedback but i think plannotator is doing the thing where it tries to watch the whole of /tmp and thrashes sending loads of data back and forth. you might need to rescue it/my comments"
+
+Summary: Plannotator accepted the review in its browser UI, but the CLI callback stalled while holding hundreds of files open across the repository. The submitted annotations had to be recovered from the live browser page before terminating the exact stuck process.
