@@ -226,3 +226,12 @@ timestamp: 2026-07-23T12:39:58Z
 message: "i think there's a bug, some weird characters in the caption. also can you please make a somewhat realitic test that has captions from test.step and the captions are meaningful/realistic and not random shit with escape characters. I want someone to be able to read this and for it to click that it's actually useful"
 
 Summary: Codex used the literal caption `Create {an} account\path` to test ASS escaping, then uploaded that artifact as the feature's PR demo. The renderer faithfully displayed the intentionally strange fixture text, making the showcase look broken and obscuring why `test.step` captions are useful. The visual proof should have used a realistic multi-step flow with meaningful titles, while any low-level escaping coverage stayed separate from reviewer-facing media.
+
+---
+
+coding_agent: Codex (GPT-5)
+session_id: 019f8f79-2b0f-7581-bcef-e27d90b85d09
+timestamp: 2026-07-24T12:23:10+01:00
+message: "this helper is three layers of pointless helpers. if it was inlined it would stick out how meaningless all the transformations are"
+
+Summary: Codex split repo creation into three exported helpers that parsed the event schema, rebuilt nearly the same creation-source object without `defaultBranch`, then parsed it again after adding the resolved branch. This obscured a small operation and detached `RepoCreateInput` from the contract schema that had previously defined it. The RPC should infer the public input from the event schema and resolve the branch inline.
