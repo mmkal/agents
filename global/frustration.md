@@ -264,3 +264,12 @@ timestamp: 2026-07-24T17:09:28+01:00
 message: "i sent feedback but i think plannotator is doing the thing where it tries to watch the whole of /tmp and thrashes sending loads of data back and forth. you might need to rescue it/my comments"
 
 Summary: Plannotator accepted the review in its browser UI, but the CLI callback stalled while holding hundreds of files open across the repository. The submitted annotations had to be recovered from the live browser page before terminating the exact stuck process.
+
+---
+
+agent: claude-code
+session_id: 4a701c88-5931-49e1-a0a5-970ccedfdd2a
+timestamp: 2026-07-28T21:08:46Z
+message: "Don't add a new file that is already superseded by the time it's merged into main ffs"
+
+Summary: PR #2309 (grouped egress approvals) went through a mid-PR redesign: the first design wrote ADR 0006 (debounced NotificationProcessor), then the v2 rewrite added ADR 0007 superseding it — and left 0006 in the PR, stamped "Superseded", so main would have gained a doc that was dead on arrival. When a design is replaced before merging, its artifacts should be deleted from the branch (with the rejected-alternative context folded into the surviving doc), not archived as if they had shipped. Same PR also kept a redundant CLI demo wrapper after phone/web "Run example" buttons made it pointless — same smell of accreting artifacts across iterations instead of cleaning up.
