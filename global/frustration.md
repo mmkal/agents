@@ -273,3 +273,19 @@ timestamp: 2026-07-28T21:08:46Z
 message: "Don't add a new file that is already superseded by the time it's merged into main ffs"
 
 Summary: PR #2309 (grouped egress approvals) went through a mid-PR redesign: the first design wrote ADR 0006 (debounced NotificationProcessor), then the v2 rewrite added ADR 0007 superseding it — and left 0006 in the PR, stamped "Superseded", so main would have gained a doc that was dead on arrival. When a design is replaced before merging, its artifacts should be deleted from the branch (with the rejected-alternative context folded into the surviving doc), not archived as if they had shipped. Same PR also kept a redundant CLI demo wrapper after phone/web "Run example" buttons made it pointless — same smell of accreting artifacts across iterations instead of cleaning up.
+
+---
+
+**Agent:** Claude Code (Fable 5) · **Session:** 4a701c88-5931-49e1-a0a5-970ccedfdd2a · **Time:** 2026-07-30 ~16:10 UTC
+
+**Message:** "You twat, what are these running tasks doing? You haven't responded to comments 22 mins ago"
+
+**Summary:** Bugbot left two review comments on PR #2339 at 15:43. The agent's background CI watcher was running but only exited-and-alerted on check failures; on `unresolved threads > 0` it just kept silently sleeping through its loop, so nobody picked up the comments for 22 minutes while a "watcher" was nominally active. The watcher loop shape was:
+
+```bash
+if fails>0 → alert+exit
+if all green AND threads==0 → exit
+otherwise → sleep 90   # <- new threads land here, silently, forever
+```
+
+New review threads must be a first-class wake condition, same as failures. Watchers whose job includes comments should exit-and-report the moment a new unresolved thread appears.
