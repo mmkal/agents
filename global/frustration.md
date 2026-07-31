@@ -289,3 +289,12 @@ otherwise → sleep 90   # <- new threads land here, silently, forever
 ```
 
 New review threads must be a first-class wake condition, same as failures. Watchers whose job includes comments should exit-and-report the moment a new unresolved thread appears.
+
+---
+
+coding_agent: Codex (GPT-5)
+session_id: 019fb811-3c27-74c1-8ad1-176329d1b084
+timestamp: 2026-07-31T13:16:18+01:00
+message: "The previous agent got this wrong. I left a comment. Also demo videos should in general correspond to real tests."
+
+Summary: The prior implementation injected an address-bar element into the live page and generated reviewer media from an ignored, one-off demo spec. This violated the intended post-rendering architecture and left the visual proof detached from checked-in regression coverage.
