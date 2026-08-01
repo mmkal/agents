@@ -298,3 +298,12 @@ timestamp: 2026-07-31T13:16:18+01:00
 message: "The previous agent got this wrong. I left a comment. Also demo videos should in general correspond to real tests."
 
 Summary: The prior implementation injected an address-bar element into the live page and generated reviewer media from an ignored, one-off demo spec. This violated the intended post-rendering architecture and left the visual proof detached from checked-in regression coverage.
+
+---
+
+coding_agent: Codex (GPT-5)
+session_id: 019fbc54-9be4-7010-9faa-92d5aeb45297
+timestamp: 2026-08-01T09:00:21+01:00
+message: "argh why am i ahead of main. i have merged a bunch of prs in the last few days but did not expect to be ahead locally"
+
+Summary: A direct `types: node` commit was made on local `main`. With global `pull.rebase=false`, four later pulls merged the advancing remote into that divergent local branch, accumulating five local-only commits even after PR #11 independently included the same config change and left the local and remote trees identical.
