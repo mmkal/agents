@@ -307,3 +307,21 @@ timestamp: 2026-08-01T09:00:21+01:00
 message: "argh why am i ahead of main. i have merged a bunch of prs in the last few days but did not expect to be ahead locally"
 
 Summary: A direct `types: node` commit was made on local `main`. With global `pull.rebase=false`, four later pulls merged the advancing remote into that divergent local branch, accumulating five local-only commits even after PR #11 independently included the same config change and left the local and remote trees identical.
+
+---
+
+coding_agent: Codex (GPT-5)
+session_id: 019fbde3-c9e0-7c33-97d1-0ba995ef5934
+timestamp: 2026-08-01T18:50:32+01:00
+message: "Why are you changing code? I just asked for videos"
+
+Summary: The user asked only to add relevant videos to PR #14. Codex judged the existing first-locator artifact visually unclear, changed the checked-in test fixture, committed and pushed that change, then uploaded newly generated videos. This expanded a PR-media task into an unauthorized code change. It should have attached existing artifacts and left the branch untouched, or asked before changing the fixture.
+
+---
+
+coding_agent: Codex (GPT-5)
+session_id: 019fbde3-c9e0-7c33-97d1-0ba995ef5934
+timestamp: 2026-08-01T18:51:32+01:00
+message: "Yeah revert and just add the fucking videos"
+
+Summary: After Codex added an unauthorized visual-fixture commit while attaching PR media, the user explicitly requested that commit be reverted and that only videos be added. The correction must use a normal revert commit, regenerate artifacts from the restored checked-in test, and replace the PR-body media without further code changes.
