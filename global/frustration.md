@@ -325,3 +325,12 @@ timestamp: 2026-08-01T18:51:32+01:00
 message: "Yeah revert and just add the fucking videos"
 
 Summary: After Codex added an unauthorized visual-fixture commit while attaching PR media, the user explicitly requested that commit be reverted and that only videos be added. The correction must use a normal revert commit, regenerate artifacts from the restored checked-in test, and replace the PR-body media without further code changes.
+
+---
+
+coding_agent: Codex (GPT-5)
+session_id: 019fcc8a-c39a-7940-8df7-85cb34080ca3
+timestamp: 2026-08-04T12:34:00+01:00
+message: "don't we have clear instructions in our prompts to avoid expect-based assertions like the one i got rid of?"
+
+Summary: A generated video-mode spec used redundant Playwright `expect` assertions after locator waits, despite `writing-middlewright-tests.md` explicitly saying to use locator actions and `waitFor()` for UI state and even naming this exact pattern as rubbish. The same test also obscured the wrapped page behind `plugged` instead of aliasing the fixture to `basePage` and naming the wrapped page `page`.
