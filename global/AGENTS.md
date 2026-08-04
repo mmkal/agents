@@ -55,28 +55,15 @@ Include the coding agent session id at the bottom of the pull request so I can r
 
 ### Pull request media
 
-When a pull request would benefit from visual review, include screenshots or short videos in the PR body. The most reliable way to upload arbitrary media to GitHub is to use the browser attachment flow:
+When a pull request would benefit from visual review, include screenshots or short videos in the PR body. Upload them with the installed `gh-image` extension:
 
-1. Open the pull request in GitHub with Playwriter.
-2. Edit the PR body or a comment.
-3. Click the editor's `Attach files` button, choose the local image/video, and wait for GitHub to insert a `https://github.com/user-attachments/assets/...` URL.
-4. For images, use `<img src="..." />` format, this will render inline by default
-5. Ensure the raw attachment URL appears on its own paragraph. It will not render properly unless there is an empty line above and below it.
-6. Save the edit. GitHub will render supported videos inline as a player.
+```sh
+gh image path/to/file --repo owner/repo
+```
 
-The GitHub CLI can edit the PR body once you already have an attachment URL, but it does not provide an equivalent generic upload command for markdown attachments.
+`gh-image` uses the active GitHub browser session by default and prints a ready-to-paste reference. Put that output on its own paragraph in the PR body or comment. Keep video output as a bare URL so GitHub renders its inline player.
 
-Key fact: a real inline `<video>` **player** only comes from a `github.com/user-attachments/assets/...` URL (minted by the editor attachment upload). GitHub **sanitises `<video>` tags that point at any other host**, so a release-download `.mp4` (or any external URL) can only ever render as a *link*, never a player. GIFs render inline as images from any URL, which is why the release-asset trick falls back to GIF for motion. Don't waste time trying to embed a release-hosted mp4 as a video — it won't work.
-
-If the `Attach files` picker / file-upload tool can't be driven (e.g. a broken/mismatched `file_upload` MCP tool that rejects host paths, or a headless run), inject the file into the editor programmatically instead of handing the manual drag back to me — the whole point is to automate it:
-
-1. `base64 -i clip.mp4 | tr -d '\n' > clip.b64`, then `pbcopy < clip.b64` to put the base64 on the clipboard as **text**. Keep the clip small (re-encode, e.g. `ffmpeg -vf scale=960 -crf 30`) so the paste stays snappy.
-2. Real `cmd+v` (the computer/keyboard tool, not a synthetic event) into the GitHub comment textarea (`#new_comment_field`). Plain-text paste needs no permission. **Do not** use `navigator.clipboard.readText()` — it hangs on Chrome's clipboard-permission prompt and times out the JS eval.
-3. In page JS: read the textarea value (verify it with a sha256 against a shell-computed hash so any corruption is caught), then `atob` → `Uint8Array` → `new File([bytes], 'clip.mp4', { type: 'video/mp4' })`.
-4. Clear the textarea (native value setter + dispatch `input`), then assign the `<file-attachment>` element's hidden input (`#fc-new_comment_field`): `input.files = dataTransfer.files` and dispatch `input` + `change`. GitHub uploads it and inserts the `user-attachments/assets/<uuid>` URL into the textarea.
-5. Read that URL back, **don't submit the comment** (the asset is already permanent), and place the bare URL on its own line in the PR body via `gh pr edit --body-file`. Verify with `gh api repos/O/R/pulls/N -H "Accept: application/vnd.github.html+json" --jq .body_html | grep '<video'`.
-
-General principle: when a tool is broken, exhaust programmatic workarounds before offloading a manual step back to me.
+Only use Playwriter or GitHub's browser attachment flow if `gh-image` cannot get a valid browser session or complete the upload. Do not use a release asset for an MP4: GitHub renders only `user-attachments` video URLs as inline players.
 
 ## Making changes
 
