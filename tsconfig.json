@@ -9,5 +9,5 @@
     "target": "ESNext",
     "types": ["node", "vitest"]
   },
-  "include": ["examples/**/*.ts", "src/**/*.ts", "tests/**/*.ts", "vitest.config.ts"]
+  "include": ["examples/**/*.ts", "scripts/**/*.ts", "src/**/*.ts", "tests/**/*.ts", "vitest.config.ts"]
 }

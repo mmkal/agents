@@ -1,0 +1,45 @@
+{
+  "$schema": "https://json-schema.org/draft-07/schema",
+  "title": "MCP servers source of truth",
+  "description": "Shape follows pi's mcp.json (pi-mcp-adapter). pi reads this file directly via symlink; scripts/sync-mcp.ts translates it for opencode, claude and codex. Fields marked pi-only are ignored by the sync script.",
+  "type": "object",
+  "additionalProperties": false,
+  "required": ["mcpServers"],
+  "properties": {
+    "$schema": {"type": "string"},
+    "settings": {
+      "description": "pi-only adapter settings (see pi-mcp-adapter McpSettings)",
+      "type": "object",
+      "additionalProperties": false,
+      "properties": {
+        "toolPrefix": {"enum": ["server", "none", "short"]},
+        "idleTimeout": {"type": "number", "description": "minutes, default 10, 0 to disable"},
+        "directTools": {"type": "boolean"},
+        "disableProxyTool": {"type": "boolean"},
+        "autoAuth": {"type": "boolean"},
+        "sampling": {"type": "boolean"},
+        "samplingAutoApprove": {"type": "boolean"},
+        "authRequiredMessage": {"type": "string"}
+      }
+    },
+    "mcpServers": {
+      "type": "object",
+      "additionalProperties": {
+        "type": "object",
+        "additionalProperties": false,
+        "properties": {
+          "command": {"type": "string", "description": "stdio server: executable"},
+          "args": {"type": "array", "items": {"type": "string"}},
+          "env": {"type": "object", "additionalProperties": {"type": "string"}},
+          "cwd": {"type": "string"},
+          "url": {"type": "string", "description": "streamable HTTP server. Mutually exclusive with command."},
+          "headers": {"type": "object", "additionalProperties": {"type": "string"}},
+          "auth": {"enum": ["oauth", "bearer", false], "description": "pi-only"},
+          "bearerTokenEnv": {"type": "string", "description": "pi-only"},
+          "lifecycle": {"enum": ["eager", "lazy"], "description": "pi-only"}
+        },
+        "oneOf": [{"required": ["command"]}, {"required": ["url"]}]
+      }
+    }
+  }
+}

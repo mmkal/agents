@@ -54,7 +54,12 @@ link "$REPO/claude/settings.json"    "$HOME/.claude/settings.json"
 link "$REPO/pi/keybindings.json"        "$HOME/.pi/agent/keybindings.json"
 link "$REPO/pi/keybindings.schema.json" "$HOME/.pi/agent/keybindings.schema.json"
 link "$REPO/pi/extensions"              "$HOME/.pi/agent/extensions"
-link "$REPO/pi/mcp.json"                "$HOME/.pi/agent/mcp.json"
+
+# MCP servers. global/mcp.json is the source of truth (pi-shaped, so pi gets a
+# plain symlink); sync-mcp.ts translates it for opencode, claude and codex.
+link "$REPO/global/mcp.json"            "$HOME/.pi/agent/mcp.json"
+echo "syncing mcp servers from global/mcp.json"
+node "$REPO/scripts/sync-mcp.ts"
 
 # Skills: one symlink per skill dir, into each tool's skills dir.
 # Pi also scans ~/.agents/skills, so don't install a Pi-specific link when the

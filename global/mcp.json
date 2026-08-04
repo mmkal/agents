@@ -1,14 +1,11 @@
 {
+  "$schema": "./mcp.schema.json",
   "settings": {
     "toolPrefix": "server",
     "idleTimeout": 10,
     "directTools": false
   },
   "mcpServers": {
-    "exa": {
-      "url": "https://mcp.exa.ai/mcp",
-      "lifecycle": "lazy"
-    },
     "playwriter": {
       "command": "npx",
       "args": ["-y", "playwriter@latest"],
@@ -17,8 +14,21 @@
       },
       "lifecycle": "lazy"
     },
+    "cloudflare_logs": {
+      "command": "npx",
+      "args": ["-y", "mcp-remote", "https://observability.mcp.cloudflare.com/mcp"],
+      "lifecycle": "lazy"
+    },
     "context7": {
       "url": "https://mcp.context7.com/mcp",
+      "lifecycle": "lazy"
+    },
+    "exa": {
+      "url": "https://mcp.exa.ai/mcp",
+      "lifecycle": "lazy"
+    },
+    "grep": {
+      "url": "https://mcp.grep.app",
       "lifecycle": "lazy"
     }
   }

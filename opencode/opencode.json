@@ -15,32 +15,42 @@
     }
   },
   "mcp": {
+    "playwriter": {
+      "type": "local",
+      "command": [
+        "npx",
+        "-y",
+        "playwriter@latest"
+      ],
+      "environment": {
+        "PLAYWRITER_AUTO_ENABLE": "1"
+      }
+    },
     "cloudflare_logs": {
       "type": "local",
       "command": [
         "npx",
+        "-y",
         "mcp-remote",
         "https://observability.mcp.cloudflare.com/mcp"
       ]
-    },
-    "playwriter": {
-      "type": "local",
-      "command": ["npx", "playwriter@latest"]
     },
     "context7": {
       "type": "remote",
       "url": "https://mcp.context7.com/mcp"
     },
-    "grep": {
-      "type": "remote",
-      "url": "https://mcp.grep.app"
-    },
     "exa": {
       "type": "remote",
       "url": "https://mcp.exa.ai/mcp"
+    },
+    "grep": {
+      "type": "remote",
+      "url": "https://mcp.grep.app"
     }
   },
-  "plugin": ["opencode-openai-codex-auth"],
+  "plugin": [
+    "opencode-openai-codex-auth"
+  ],
   "provider": {
     "openai": {
       "name": "OpenAI",
@@ -48,7 +58,9 @@
         "reasoningEffort": "medium",
         "reasoningSummary": "auto",
         "textVerbosity": "medium",
-        "include": ["reasoning.encrypted_content"],
+        "include": [
+          "reasoning.encrypted_content"
+        ],
         "store": false
       },
       "models": {
@@ -59,8 +71,13 @@
             "output": 128000
           },
           "modalities": {
-            "input": ["text", "image"],
-            "output": ["text"]
+            "input": [
+              "text",
+              "image"
+            ],
+            "output": [
+              "text"
+            ]
           },
           "variants": {
             "none": {
@@ -97,8 +114,13 @@
             "output": 128000
           },
           "modalities": {
-            "input": ["text", "image"],
-            "output": ["text"]
+            "input": [
+              "text",
+              "image"
+            ],
+            "output": [
+              "text"
+            ]
           },
           "variants": {
             "low": {
@@ -130,8 +152,13 @@
             "output": 128000
           },
           "modalities": {
-            "input": ["text", "image"],
-            "output": ["text"]
+            "input": [
+              "text",
+              "image"
+            ],
+            "output": [
+              "text"
+            ]
           },
           "variants": {
             "low": {
