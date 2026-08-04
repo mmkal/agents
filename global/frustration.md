@@ -334,3 +334,12 @@ timestamp: 2026-08-04T12:34:00+01:00
 message: "don't we have clear instructions in our prompts to avoid expect-based assertions like the one i got rid of?"
 
 Summary: A generated video-mode spec used redundant Playwright `expect` assertions after locator waits, despite `writing-middlewright-tests.md` explicitly saying to use locator actions and `waitFor()` for UI state and even naming this exact pattern as rubbish. The same test also obscured the wrapped page behind `plugged` instead of aliasing the fixture to `basePage` and naming the wrapped page `page`.
+
+---
+
+coding_agent: Codex (GPT-5)
+session_id: 019fcd8a-f258-78a0-be6d-e877586b1a6f
+timestamp: 2026-08-04T17:12:04+01:00
+message: "oof how come i'm so many commits ahead of main"
+
+Summary: Local `main` was 14 commits ahead of GitHub's `main`: 13 timestamped Stop-hook auto-commits made after agent turns, plus one merge commit from pulling remote `main` into the divergent local branch. Eleven of the auto-commits mainly appended frustration reports; the one large commit contained the MCP sync work. The configured auto-commit hook turns small incidental edits on `main` into persistent divergence and makes ordinary pulls add merge commits.
