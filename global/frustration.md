@@ -343,3 +343,30 @@ timestamp: 2026-08-04T17:12:04+01:00
 message: "oof how come i'm so many commits ahead of main"
 
 Summary: Local `main` was 14 commits ahead of GitHub's `main`: 13 timestamped Stop-hook auto-commits made after agent turns, plus one merge commit from pulling remote `main` into the divergent local branch. Eleven of the auto-commits mainly appended frustration reports; the one large commit contained the MCP sync work. The configured auto-commit hook turns small incidental edits on `main` into persistent divergence and makes ordinary pulls add merge commits.
+
+---
+
+coding_agent: Codex (GPT-5)
+session_id: 019fd124-f749-7283-9f94-c73be9f646fe
+timestamp: 2026-08-05T10:01:56+01:00
+message: "btw this should be a replace not an append, not sure what you're doing. and we need this to run for at least four hours"
+
+Summary: Codex initially interpreted the recurring write as an append, causing the target file to accumulate jokes. The user intended each tick to replace the prior contents and also required the process to run for at least four hours.
+
+---
+
+coding_agent: Codex (GPT-5)
+session_id: 019fd124-f749-7283-9f94-c73be9f646fe
+timestamp: 2026-08-05T10:04:42+01:00
+message: "what's with the accordian-accordian crap? just a single noun each time please"
+
+Summary: Codex tried to guarantee hundreds of unique values by emitting hyphenated compound nouns such as `accordion-accordion`. The user wanted exactly one ordinary noun in each joke, so the generator needed a sufficiently large curated list of distinct single nouns instead.
+
+---
+
+coding_agent: Codex (GPT-5)
+session_id: 019fd280-636c-75d1-94bf-c36427373e47
+timestamp: 2026-08-05T17:05:37+01:00
+message: "i don't really want you to use bloddy tdd i just want you to add the posthog mcp and the tombstone feature bro"
+
+Summary: Codex turned a small MCP config change into a narrated TDD exercise and added an integration test before implementing the requested PostHog server and null-tombstone sync behavior. The user wanted the direct config/script change without process overhead.

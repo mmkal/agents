@@ -1,17 +1,13 @@
 #!/usr/bin/env node
-// Sync MCP servers from global/mcp.json (source of truth, pi-shaped) into each tool:
+// Sync MCP servers from global/mcp.json (source of truth) into each tool:
 //
-// - pi:       nothing to do here — install.sh symlinks global/mcp.json to ~/.pi/agent/mcp.json
-// - opencode: rewrites the `mcp` key of opencode/opencode.json (that file is symlinked
-//             into ~/.config/opencode by install.sh, so editing the repo copy is enough)
-// - claude:   `claude mcp remove/add-json --scope user`. User-scope servers live inside
-//             ~/.claude.json, a big mutable state file we can't symlink. add-json errors on
-//             an existing name, hence remove-first. Don't run while a claude session is
-//             open — it may overwrite ~/.claude.json on exit.
-// - codex:    `codex mcp add` (upserts into ~/.codex/config.toml, also unsymlinkable)
+// - pi:       writes a filtered pi/mcp.json, symlinked by install.sh
+// - opencode: rewrites the `mcp` key of opencode/opencode.json
+// - claude:   updates user-scoped servers in ~/.claude.json through the CLI
+// - codex:    updates ~/.codex/config.toml through the CLI
 //
-// Removal is not synced: deleting a server from global/mcp.json leaves it behind in
-// claude/codex until you run `claude mcp remove <name> -s user` / `codex mcp remove <name>`.
+// A null entry is a tombstone: remove it downstream. Missing entries are left
+// alone so servers managed outside this repo are preserved.
 
 import {execFileSync} from 'node:child_process'
 import fs from 'node:fs'
@@ -26,7 +22,15 @@ interface ServerEntry {
 
 const repo = path.resolve(import.meta.dirname, '..')
 const source = JSON.parse(fs.readFileSync(path.join(repo, 'global/mcp.json'), 'utf8'))
-const servers: Record<string, ServerEntry> = source.mcpServers
+const configuredServers: Record<string, ServerEntry | null> = source.mcpServers
+const servers = Object.fromEntries(
+  Object.entries(configuredServers).filter(
+    (entry): entry is [string, ServerEntry] => entry[1] !== null,
+  ),
+)
+const tombstones = Object.entries(configuredServers)
+  .filter(([, server]) => server === null)
+  .map(([name]) => name)
 
 const run = (cmd: string, args: string[]) =>
   execFileSync(cmd, args, {encoding: 'utf8', stdio: ['ignore', 'pipe', 'pipe']})
@@ -40,18 +44,26 @@ const available = (cmd: string) => {
   }
 }
 
+// pi
+const piPath = path.join(repo, 'pi/mcp.json')
+fs.writeFileSync(
+  piPath,
+  JSON.stringify({settings: source.settings, mcpServers: servers}, null, 2) + '\n',
+)
+console.log(`  gen  ${piPath}`)
+
 // opencode
 const opencodePath = path.join(repo, 'opencode/opencode.json')
 const opencode = JSON.parse(fs.readFileSync(opencodePath, 'utf8'))
 opencode.mcp = Object.fromEntries(
-  Object.entries(servers).map(([name, s]) => [
+  Object.entries(servers).map(([name, server]) => [
     name,
-    s.url
-      ? {type: 'remote', url: s.url}
+    server.url
+      ? {type: 'remote', url: server.url}
       : {
           type: 'local',
-          command: [s.command, ...(s.args || [])],
-          ...(s.env ? {environment: s.env} : {}),
+          command: [server.command, ...(server.args || [])],
+          ...(server.env ? {environment: server.env} : {}),
         },
   ]),
 )
@@ -64,10 +76,25 @@ if (available('claude')) {
   const existing = fs.existsSync(claudeJsonPath)
     ? JSON.parse(fs.readFileSync(claudeJsonPath, 'utf8')).mcpServers || {}
     : {}
-  for (const [name, s] of Object.entries(servers)) {
-    const json = s.url
-      ? {type: 'http', url: s.url}
-      : {type: 'stdio', command: s.command, args: s.args || [], env: s.env || {}}
+
+  for (const name of tombstones) {
+    try {
+      run('claude', ['mcp', 'remove', name, '--scope', 'user'])
+      console.log(`  rm   claude ${name}`)
+    } catch {
+      console.log(`  ok   claude ${name} (absent)`)
+    }
+  }
+
+  for (const [name, server] of Object.entries(servers)) {
+    const json = server.url
+      ? {type: 'http', url: server.url}
+      : {
+          type: 'stdio',
+          command: server.command,
+          args: server.args || [],
+          env: server.env || {},
+        }
     if (JSON.stringify(existing[name]) === JSON.stringify(json)) {
       console.log(`  ok   claude ${name}`)
       continue
@@ -86,17 +113,24 @@ if (available('claude')) {
 
 // codex
 if (available('codex')) {
-  for (const [name, s] of Object.entries(servers)) {
-    // Skip if already configured as desired — important because `codex mcp add --url`
-    // auto-opens a browser OAuth window on every add.
+  for (const name of tombstones) {
+    try {
+      run('codex', ['mcp', 'remove', name])
+      console.log(`  rm   codex ${name}`)
+    } catch {
+      console.log(`  ok   codex ${name} (absent)`)
+    }
+  }
+
+  for (const [name, server] of Object.entries(servers)) {
     try {
       const current = JSON.parse(run('codex', ['mcp', 'get', name, '--json'])).transport
-      const matches = s.url
-        ? current.type === 'streamable_http' && current.url === s.url
+      const matches = server.url
+        ? current.type === 'streamable_http' && current.url === server.url
         : current.type === 'stdio' &&
-          current.command === s.command &&
-          JSON.stringify(current.args) === JSON.stringify(s.args || []) &&
-          JSON.stringify(current.env || {}) === JSON.stringify(s.env || {})
+          current.command === server.command &&
+          JSON.stringify(current.args) === JSON.stringify(server.args || []) &&
+          JSON.stringify(current.env || {}) === JSON.stringify(server.env || {})
       if (matches) {
         console.log(`  ok   codex ${name}`)
         continue
@@ -104,26 +138,27 @@ if (available('codex')) {
     } catch {
       // not present yet
     }
-    const args = s.url
-      ? ['--url', s.url]
+    const args = server.url
+      ? ['--url', server.url]
       : [
-          ...Object.entries(s.env || {}).flatMap(([k, v]) => ['--env', `${k}=${v}`]),
+          ...Object.entries(server.env || {}).flatMap(([key, value]) => [
+            '--env',
+            `${key}=${value}`,
+          ]),
           '--',
-          s.command!,
-          ...(s.args || []),
+          server.command!,
+          ...(server.args || []),
         ]
     try {
-      // For --url servers, codex writes the config then blocks on an interactive
-      // OAuth flow. The timeout kills that wait; auth can be done later with
-      // `codex mcp login <name>`.
+      // For URL servers, Codex writes the config then may block on OAuth.
       execFileSync('codex', ['mcp', 'add', name, ...args], {
         encoding: 'utf8',
         stdio: ['ignore', 'pipe', 'pipe'],
         timeout: 10_000,
         killSignal: 'SIGKILL',
       })
-    } catch (err) {
-      run('codex', ['mcp', 'get', name]) // throws if the add didn't stick
+    } catch {
+      run('codex', ['mcp', 'get', name])
     }
     console.log(`  mcp  codex ${name}`)
   }

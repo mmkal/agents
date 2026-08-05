@@ -25,20 +25,26 @@
     "mcpServers": {
       "type": "object",
       "additionalProperties": {
-        "type": "object",
-        "additionalProperties": false,
-        "properties": {
-          "command": {"type": "string", "description": "stdio server: executable"},
-          "args": {"type": "array", "items": {"type": "string"}},
-          "env": {"type": "object", "additionalProperties": {"type": "string"}},
-          "cwd": {"type": "string"},
-          "url": {"type": "string", "description": "streamable HTTP server. Mutually exclusive with command."},
-          "headers": {"type": "object", "additionalProperties": {"type": "string"}},
-          "auth": {"enum": ["oauth", "bearer", false], "description": "pi-only"},
-          "bearerTokenEnv": {"type": "string", "description": "pi-only"},
-          "lifecycle": {"enum": ["eager", "lazy"], "description": "pi-only"}
-        },
-        "oneOf": [{"required": ["command"]}, {"required": ["url"]}]
+        "description": "A server definition, or null to remove that server from downstream configs.",
+        "oneOf": [
+          {"type": "null"},
+          {
+            "type": "object",
+            "additionalProperties": false,
+            "properties": {
+              "command": {"type": "string", "description": "stdio server: executable"},
+              "args": {"type": "array", "items": {"type": "string"}},
+              "env": {"type": "object", "additionalProperties": {"type": "string"}},
+              "cwd": {"type": "string"},
+              "url": {"type": "string", "description": "streamable HTTP server. Mutually exclusive with command."},
+              "headers": {"type": "object", "additionalProperties": {"type": "string"}},
+              "auth": {"enum": ["oauth", "bearer", false], "description": "pi-only"},
+              "bearerTokenEnv": {"type": "string", "description": "pi-only"},
+              "lifecycle": {"enum": ["eager", "lazy"], "description": "pi-only"}
+            },
+            "oneOf": [{"required": ["command"]}, {"required": ["url"]}]
+          }
+        ]
       }
     }
   }

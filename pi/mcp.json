@@ -1,5 +1,4 @@
 {
-  "$schema": "./mcp.schema.json",
   "settings": {
     "toolPrefix": "server",
     "idleTimeout": 10,
@@ -8,19 +7,19 @@
   "mcpServers": {
     "playwriter": {
       "command": "npx",
-      "args": ["-y", "playwriter@latest"],
+      "args": [
+        "-y",
+        "playwriter@latest"
+      ],
       "env": {
         "PLAYWRITER_AUTO_ENABLE": "1"
       },
       "lifecycle": "lazy"
     },
-    "cloudflare_logs": null,
     "context7": {
       "url": "https://mcp.context7.com/mcp",
       "lifecycle": "lazy"
     },
-    "exa": null,
-    "grep": null,
     "posthog": {
       "url": "https://mcp.posthog.com/mcp",
       "auth": "oauth",
