@@ -370,3 +370,12 @@ timestamp: 2026-08-05T17:05:37+01:00
 message: "i don't really want you to use bloddy tdd i just want you to add the posthog mcp and the tombstone feature bro"
 
 Summary: Codex turned a small MCP config change into a narrated TDD exercise and added an integration test before implementing the requested PostHog server and null-tombstone sync behavior. The user wanted the direct config/script change without process overhead.
+
+---
+
+coding_agent: Codex (GPT-5)
+session_id: 019fd77a-efbe-74d3-abca-205b342f0d75
+timestamp: 2026-08-06T15:31:16+01:00
+message: "why are you using agent browser ffs. check the fix-stream skill for how to read this stuff"
+
+Summary: Codex treated an OS agent-stream URL as a generic website extraction task and opened a headed browser, despite the repo's `fix-stream` skill documenting the direct production ITX commands for resolving the project and paging the full stream journal.
