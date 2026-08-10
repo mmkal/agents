@@ -379,3 +379,12 @@ timestamp: 2026-08-06T15:31:16+01:00
 message: "why are you using agent browser ffs. check the fix-stream skill for how to read this stuff"
 
 Summary: Codex treated an OS agent-stream URL as a generic website extraction task and opened a headed browser, despite the repo's `fix-stream` skill documenting the direct production ITX commands for resolving the project and paging the full stream journal.
+
+---
+
+**Agent:** Claude Code (claude-fable-5)
+**Session:** e89f2eb5-b303-47df-9e5d-5033942f37d8
+**Timestamp:** 2026-08-10 (~15:00 local)
+**Message:** "i need you to rewrite all the parts that involve the word \"door\". this is hopefully just PR bodies/titles/docs etc. but i just want to tell you that that is not a fucking clear concept"
+
+**Summary:** During the codemode-preamble work the agent coined the term "script door" for "any entry point that submits a script to a capability host" (agent output, slash commands, scheduler, runScript) and then used it pervasively — code comments, PR bodies, task files, review replies, a plan doc, and even a branch name (`repl-on-script-door`). The metaphor was never defined at most usage sites and doesn't map to anything in the product vocabulary. Misha flagged it once mildly earlier ("wtf is a door?" in plannotator feedback — agent defined the term inline but KEPT using it) and then had to escalate. Lesson: invented shorthand that isn't in the repo's existing domain language (CONTEXT.md/docs) should be either promoted properly (define in docs, get buy-in) or not used; a definition parenthetical doesn't license the jargon, and "wtf is X" feedback means stop using X, not explain X.
