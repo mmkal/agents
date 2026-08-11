@@ -388,3 +388,12 @@ Summary: Codex treated an OS agent-stream URL as a generic website extraction ta
 **Message:** "i need you to rewrite all the parts that involve the word \"door\". this is hopefully just PR bodies/titles/docs etc. but i just want to tell you that that is not a fucking clear concept"
 
 **Summary:** During the codemode-preamble work the agent coined the term "script door" for "any entry point that submits a script to a capability host" (agent output, slash commands, scheduler, runScript) and then used it pervasively — code comments, PR bodies, task files, review replies, a plan doc, and even a branch name (`repl-on-script-door`). The metaphor was never defined at most usage sites and doesn't map to anything in the product vocabulary. Misha flagged it once mildly earlier ("wtf is a door?" in plannotator feedback — agent defined the term inline but KEPT using it) and then had to escalate. Lesson: invented shorthand that isn't in the repo's existing domain language (CONTEXT.md/docs) should be either promoted properly (define in docs, get buy-in) or not used; a definition parenthetical doesn't license the jargon, and "wtf is X" feedback means stop using X, not explain X.
+
+---
+
+coding_agent: Codex (GPT-5)
+session_id: 019fd285-8920-76c1-825f-ed313f49c727
+timestamp: 2026-08-11T18:20:11Z
+message: "ok give me a full status report since this has been going SO long now, I haven't kept track of all the PRs created to get this done."
+
+Summary: The mobile approval restoration investigation ran for roughly 54 hours and produced a replacement PR plus three stacked follow-ups, but Codex had not yet given the user one concise map of what was merged, what remained open, which old PR was superseded, or the required merge order. The user had to ask for portfolio cleanup and a full status reconstruction after losing track of the stack.
