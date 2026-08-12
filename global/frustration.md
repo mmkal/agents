@@ -397,3 +397,12 @@ timestamp: 2026-08-11T18:20:11Z
 message: "ok give me a full status report since this has been going SO long now, I haven't kept track of all the PRs created to get this done."
 
 Summary: The mobile approval restoration investigation ran for roughly 54 hours and produced a replacement PR plus three stacked follow-ups, but Codex had not yet given the user one concise map of what was merged, what remained open, which old PR was superseded, or the required merge order. The user had to ask for portfolio cleanup and a full status reconstruction after losing track of the stack.
+
+---
+
+- **Agent**: Claude Code (Fable 5)
+- **Session**: bba87654-8592-4e00-8ec7-65d305b59bc2
+- **Time**: 2026-08-12 ~22:45 BST
+- **Message**: "bro. the PR body. Stop using jargon and speak coherently. State it more simply and concisely, like one human talking to another."
+
+A subagent wrote the PR body for iterate/iterate#2486 (stream subscription stall fix) saturated with invented internal jargon — "antidote deploy", "mass-skip fuse", "a halt is a breaker, not a grave", "pull-path registry.catchUp", "grandfathered to operator doors" — plus dense parentheticals. Technically accurate but unreadable as a PR description; a reviewer would need the codebase's private vocabulary already loaded. The pattern: agents narrating in the codebase's internal metaphors instead of plain cause-and-effect ("after a redeploy the receiver crashes, the sender gives up, and nothing ever retries"). PR bodies are for a human seeing the change fresh.
