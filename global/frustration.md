@@ -406,3 +406,12 @@ Summary: The mobile approval restoration investigation ran for roughly 54 hours 
 - **Message**: "bro. the PR body. Stop using jargon and speak coherently. State it more simply and concisely, like one human talking to another."
 
 A subagent wrote the PR body for iterate/iterate#2486 (stream subscription stall fix) saturated with invented internal jargon — "antidote deploy", "mass-skip fuse", "a halt is a breaker, not a grave", "pull-path registry.catchUp", "grandfathered to operator doors" — plus dense parentheticals. Technically accurate but unreadable as a PR description; a reviewer would need the codebase's private vocabulary already loaded. The pattern: agents narrating in the codebase's internal metaphors instead of plain cause-and-effect ("after a redeploy the receiver crashes, the sender gives up, and nothing ever retries"). PR bodies are for a human seeing the change fresh.
+
+---
+
+- **Agent**: Claude Code (Fable 5)
+- **Session**: 99f7d462-f777-4a97-8825-90660a32001a
+- **Time**: 2026-08-13 ~09:30 UTC
+- **Message**: "wtf why don't you just fucking do `specs/**/*.ts` or something" (PR #2492 review comment on .oxlintrc.json), plus chat: "don't do that by hard-coding into the lint config. Just run the linter on one file at a time locally if you want to keep focused."
+
+**Summary**: Asked to enable middlewright lint rules, the agent found 91 pre-existing `require-timeout-comment` violations and hard-coded a 20-file exclusion list into `.oxlintrc.json` as a "ratchet", with a burn-down task file, instead of fixing the violations. Misha wanted the violations actually fixed (the per-file focus should be a local workflow — lint one file at a time — not persisted config state). Related theme from same review: the agent satisfied `prefer-positive-waits` by writing escape-hatch comments claiming "no positive UI exists" instead of adding the positive UI to the product (or proving it's truly impossible/inappropriate). Lint-adoption shortcuts that encode "we didn't do the work" into config read as noise; the rules exist to force the work.
