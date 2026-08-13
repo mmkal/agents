@@ -158,6 +158,10 @@ Avoid `??` except in very rare situations. `||` is more compatible, and more rea
 
 Avoid adding `readonly` to any typescript types, it makes output types more awkward to work with and just creates visual noise. If you are *forced* to add it because some other annoying person has made their output types readonly, fine, but otherwise no thank you.
 
+## Linting
+
+Often I will write custom lint rules that catch bad patterns. In some cases the violation might just mean you should write the offending line in another way. But don't assume that. Very often the lint rule catches a serious problem *elsewhere*. For example, if a lint rule bans a blanket `await sleep(...)` expression, the fix is not likely to be "remove the sleep" (or "suppress the rule banning `sleep`"). The fix will be something like "do a large amount of work to make the sleep not necessary, *then* remove the sleep".
+
 ## gitignore
 
 I usually put `*ignoreme*` in every project's root .gitignore. If it's one of my projects, and you want to create some temporary files inside the repo for whatever reason, you can include "ignoreme" anywhere in their filename or parent directory path.
