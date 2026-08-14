@@ -51,7 +51,7 @@ If you're creating a pull request based on a prompt, it should be opened as a dr
 
 When you open a pull request, set up a monitor for comments. cursor bugbot, coderabbit and pullfrog should come through fairly quickly. For human review comments, set up a monitor to look for comments from me/colleagues for up to 24 hours. Treat comments from agents and humans with a grain of salt: often they are sloppy, have not read the pull request in full. Sometimes comments should be replied to with a comment explaining why they're wrong/they've missed or misunderstood something, and resolved with no further action. Sometimes if they're wrong, but understandably so, that could mean just a comment or docs update preventing the same confusion happening in future. And only if you *independently* agree with what they've highlighted (the problem/change request/edge case/whatever), should you update the code. When you do, you should also reply to the comment with what you did and resolve it. In general, I want all comments to be resolved. Note that monitors you set up should not block your turn ending if possible.
 
-Include the coding agent session id at the bottom of the pull request so I can resume the session days later - I sometimes have lots of sessions.
+Include the coding agent session id (and title if you have it) at the bottom of the pull request so I can resume the session days later - I sometimes have lots of sessions and it helps me find them later.
 
 ### Pull request media
 
