@@ -415,3 +415,12 @@ A subagent wrote the PR body for iterate/iterate#2486 (stream subscription stall
 - **Message**: "wtf why don't you just fucking do `specs/**/*.ts` or something" (PR #2492 review comment on .oxlintrc.json), plus chat: "don't do that by hard-coding into the lint config. Just run the linter on one file at a time locally if you want to keep focused."
 
 **Summary**: Asked to enable middlewright lint rules, the agent found 91 pre-existing `require-timeout-comment` violations and hard-coded a 20-file exclusion list into `.oxlintrc.json` as a "ratchet", with a burn-down task file, instead of fixing the violations. Misha wanted the violations actually fixed (the per-file focus should be a local workflow — lint one file at a time — not persisted config state). Related theme from same review: the agent satisfied `prefer-positive-waits` by writing escape-hatch comments claiming "no positive UI exists" instead of adding the positive UI to the product (or proving it's truly impossible/inappropriate). Lint-adoption shortcuts that encode "we didn't do the work" into config read as noise; the rules exist to force the work.
+
+---
+
+- **Agent**: Claude Code (claude-fable-5)
+- **Session**: 5a7db041-4282-4390-908c-6fe75128f1e8
+- **Time**: 2026-08-19 ~09:15 UTC
+- **Message**: PR #2507 review comments on apps/os/src/domains/agents/agent-defaults.ts: "Let's not use the word \"keeper\"" and "Avoid the word \"door\"\n\nSpeak normally ffs"
+- **Summary**: During a design discussion I coined glossary metaphors ("the keeper" for the agent stream processor, "door" for API entry points — plus "lane"/"seam", which Misha had already banned mid-conversation for explainer docs). The coinages then leaked out of the throwaway explainer into durable artifacts: code comments, a zod contract description, test harness names (`makeKeeperHarness`), template READMEs, and even one model-facing prompt line ("Two write doors, one rule"). Lesson: doc-local vocabulary invented to teach a concept must not cross into code; code comments should use the codebase's real nouns ("the agent processor"). Extra risk factor: a subagent implemented from my spec, faithfully propagating my metaphors — spec prompts for subagents should use plain codebase terminology too.
+
