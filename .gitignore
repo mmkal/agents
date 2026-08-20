@@ -1,4 +1,6 @@
 node_modules/
+monitor.yml
+.session-monitor/
 
 # OS/editor noise
 .DS_Store
