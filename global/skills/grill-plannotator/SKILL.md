@@ -3,7 +3,7 @@ name: grill-with-plannotator
 description: Grill user about plan via Plannotator page instead of chat. One question per round, top of plan doc. User answers via annotations. Use when user says "grill with plannotator", "grill me in plannotator", or invokes /grill-with-plannotator.
 ---
 
-Relentless interview about plan, run through Plannotator review page. Requires Plannotator installed (hooks intercept `ExitPlanMode`). Each round = one denied plan revision. Plannotator revise loop IS interview loop.
+Relentless interview about plan, run through Plannotator review page. Each round = one plan revision file opened via `plannotator annotate --gate --json`. NOT via `ExitPlanMode` — that blocks you; this flow needs you writing the next revision while the user reads the current one.
 
 ## Round structure
 
@@ -16,17 +16,21 @@ Plan doc, every round, this order:
 
 Regenerate doc each round. Not append-only. No transcript. Stable headings, stable ordering → Plannotator plan diff stays readable as free changelog.
 
-## Loop
+## Optimistic chain
 
-1. Build doc per round structure. Present via `ExitPlanMode`. Plannotator opens in browser. Send the plannotator URL for each round in the chat too.
-2. User annotates page:
-   - Comment on Question block = answer.
-   - No comment on Question block = recommended answer accepted.
-   - Comment on ANY other item = revision request on that item. Any decision, any age. This is the point of the format — user points at old decision instead of describing it.
-   - Deny + Send Feedback = continue interview.
-   - Approve = end interview.
-3. On feedback: settle question (their answer, or recommendation if silent). Apply revisions to old decisions. Run ripple rule. Pick next question. Back to 1.
-4. On approve: settle all remaining open items with recommended answers. Emit final plan. Done.
+Files: `<dir>/rev-N.md` (dir = scratchpad subfolder). Runner: `chain.sh` next to this SKILL.md.
+
+1. Write `rev-1.md` AND `rev-2.md` (rev-2 = optimistic: assumes user takes Q1's recommendation).
+2. Start Monitor (persistent, 1h): `<skill-dir>/chain.sh <dir> 1`. One event per decision.
+3. On every event, stay one-to-two revisions ahead:
+   - `THUMBSUP` → user took the recommendation; rev-(N+1) is already open. Write `rev-(N+2).md` optimistically.
+   - `FEEDBACK` → rev-(N+1) was auto-deleted as stale. Any later queued revs are stale too: `rm` them. Settle/revise per feedback, run ripple rule, then write the new `rev-(N+2).md` FIRST and `rev-(N+1).md` LAST (the chain grabs rev-(N+1) the instant it exists — never let it see a half-written file).
+   - `APPROVED` → done. If the approved rev still had a question, settle it with the recommendation.
+4. When the last open item is being asked, queue a question-less "final plan — approve to finish" rev behind it.
+
+Lone 👍 = exactly one annotation, labeled 👍, no comment text (see `is-thumbsup.mjs`). "👍 but also…" takes the slow path. Annotations on other items = revision requests on those items, any age.
+
+Post the plannotator URL? Not needed — the chain opens the browser itself. Keep chat messages to one line per round ("Rev 7 open, rev 8 queued").
 
 ## Ripple rule
 
@@ -43,4 +47,4 @@ Same as grill-me: one question per round. Always give recommended answer. Answer
 
 ## Done when
 
-No open branches. No reopened decisions. User approves. Final plan doc = last approved page.
+No open branches. No reopened decisions. User approves. Final plan = last approved rev (with its recommendation applied, if it still had a question).
