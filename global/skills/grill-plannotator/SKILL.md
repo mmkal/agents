@@ -28,7 +28,9 @@ Files: `<dir>/rev-N.md` (dir = scratchpad subfolder). Runner: `chain.sh` next to
    - `APPROVED` → done. If the approved rev still had a question, settle it with the recommendation.
 4. When the last open item is being asked, queue a question-less "final plan — approve to finish" rev behind it.
 
-Lone 👍 = exactly one annotation, labeled 👍, no comment text (see `is-thumbsup.mjs`). "👍 but also…" takes the slow path. Annotations on other items = revision requests on those items, any age.
+Lone 👍 = exactly one annotation, labeled 👍, highlight starts at `Recommended:` and is single-line, no comment text (see `is-thumbsup.mjs`). 👍 anywhere else, multi-line highlights, or "👍 but also…" take the slow path — you read it and decide (a 👍 on "Alternatives: (a)…" is an answer, not an LGTM). Annotations on other items = revision requests on those items, any age.
+
+Approve button on a rev that still has `## Open` items = chain treats it as 👍 (plannotator's Approve would otherwise end the whole interview). Only a rev with an empty `## Open` ends on Approve — so the final page must exist as its own rev.
 
 Post the plannotator URL? Not needed — the chain opens the browser itself. Keep chat messages to one line per round ("Rev 7 open, rev 8 queued").
 
