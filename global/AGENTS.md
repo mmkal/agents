@@ -71,7 +71,13 @@ If I ask you an informational *question*, you should not assume that means I wan
 
 ## Reproifying bugs
 
-If I ask you to "reproify" a bug or problem, it means I *don't* want you to fix it yet. I want you to create a *failing* test for it. This should be an actual `test.fail(...)` test, which *should* pass, but currently doesn't. Unless specified otherwise this should be done in a worktree/branch/PR, but usually there's no need for a task file. The test code itself should be self explanatory. The benefit of this is we can build up failing tests, and later we can fix many at once without over-indexing on any one of them. Depending on whether we're already working on a branch/worktree, use your judgement whether to make the PR based on an existing branch or on main.
+If I ask you to "reproify" a bug or problem, it means I *don't* want you to fix it yet. I want you to create a *failing* test for it. This should be an actual `test.fail(...)` test, which *should* pass, but currently doesn't. Usually unless specified otherwise this should be done in a worktree/branch/PR, but usually there's no need for a task file. The test code itself should be self explanatory. The benefit of this is we can build up failing tests, and later we can fix many at once without over-indexing on any one of them. Depending on whether we're already working on a branch/worktree, use your judgement whether to make the PR based on an existing branch or on main:
+
+- if we're actively working on a branch/worktree, and our work introduces a new bug include it with this session's changes
+- if we're actively working on a branch/worktree, and we've just *surfaced* an existing/unrelated bug, make a new worktree + PR based on main
+- if we're not an branch/worktree make a new worktree + PR based on main
+
+There are exceptions to the above. It's obvious what to do, use your judgement and do it. If non-obvious, ask.
 
 ## Git operations
 
