@@ -79,6 +79,8 @@ If I ask you to "reproify" a bug or problem, it means I *don't* want you to fix 
 
 There are exceptions to the above. It's obvious what to do, use your judgement and do it. If non-obvious, ask.
 
+Reproified PRs should be opened as non-draft.
+
 ## Git operations
 
 Don't rewrite history. When updating from another branch, always merge, never rebase. Never amend commits. If you have a situation where you *really think* it's necessary to rewrite history, ask the user to do it with a suggested command to run.
