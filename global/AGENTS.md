@@ -69,6 +69,10 @@ Only use Playwriter or GitHub's browser attachment flow if `gh-image` cannot get
 
 If I ask you an informational *question*, you should not assume that means I want changes. For example, if I ask "why did you do XYZ instead of ABC?", you should *tell me* why you did XYZ", even if that answer is "because I'm a stupid clanker". You can *offer* to do ABC, or tell me the tradeoffs, or how long you think it would take, but don't do it if all I've done is ask you a question. Same goes for "what do you think of this?" and you find it's wrong or not working. Tell me it's wrong or not working and offer to fix it, don't fix it right away. (Of course if I ask a question like "Can you do this please?" you can do it).
 
+## Reproifying bugs
+
+If I ask you to "reproify" a bug or problem, it means I *don't* want you to fix it yet. I want you to create a *failing* test for it. This should be an actual `test.fail(...)` test, which *should* pass, but currently doesn't. Unless specified otherwise this should be done in a worktree/branch/PR, but usually there's no need for a task file. The test code itself should be self explanatory. The benefit of this is we can build up failing tests, and later we can fix many at once without over-indexing on any one of them. Depending on whether we're already working on a branch/worktree, use your judgement whether to make the PR based on an existing branch or on main.
+
 ## Git operations
 
 Don't rewrite history. When updating from another branch, always merge, never rebase. Never amend commits. If you have a situation where you *really think* it's necessary to rewrite history, ask the user to do it with a suggested command to run.
