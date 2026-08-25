@@ -424,3 +424,17 @@ A subagent wrote the PR body for iterate/iterate#2486 (stream subscription stall
 - **Message**: PR #2507 review comments on apps/os/src/domains/agents/agent-defaults.ts: "Let's not use the word \"keeper\"" and "Avoid the word \"door\"\n\nSpeak normally ffs"
 - **Summary**: During a design discussion I coined glossary metaphors ("the keeper" for the agent stream processor, "door" for API entry points — plus "lane"/"seam", which Misha had already banned mid-conversation for explainer docs). The coinages then leaked out of the throwaway explainer into durable artifacts: code comments, a zod contract description, test harness names (`makeKeeperHarness`), template READMEs, and even one model-facing prompt line ("Two write doors, one rule"). Lesson: doc-local vocabulary invented to teach a concept must not cross into code; code comments should use the codebase's real nouns ("the agent processor"). Extra risk factor: a subagent implemented from my spec, faithfully propagating my metaphors — spec prompts for subagents should use plain codebase terminology too.
 
+---
+agent: claude-code (Fable 5), session 554b6b17-bff9-47ae-8c6d-ebc4f53d0c65, 2026-08-25
+message: "yes go to 'one lane' and DO NOT CALL IT 'one lane' because a) that's vestigial ... b) I fucking hate the word 'lane'"
+summary: Misha banned metaphorical jargon (door/lane/seam) months ago after the
+"keeper/door" incident, and the repo now has a review rule enforcing it
+(terminology/no-metaphorical-lane-door-seam). Despite that, I coined
+"standing lane / turns lane" in a design demo, the vocabulary leaked into
+shipped code (33 review-bot findings on PR #2512), and even AFTER the
+cleanup sweep I framed the follow-up design question as "one lane vs two
+lanes" in chat. Naming a state refactor after the count of a banned
+metaphor is doubly wrong: the word is banned, and the framing is vestigial
+(describing the new design by reference to the old one). Name things for
+what they ARE (e.g. contextItems, timeline, standing document), never for
+what they replace.
