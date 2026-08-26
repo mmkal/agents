@@ -48,11 +48,13 @@ export async function capture(params: {
   const cutoff = parseSince(since)
   const file = resolve(params.file || `claude-sessions-${Date.now()}.ignoreme.yml`)
 
+  const identity = await readIdentity(userData, home)
   const found = await readDesktopSessions(userData)
-  const sessions = found
-    .filter(session => activityMs(session.record) >= cutoff)
-    .sort((a, b) => activityMs(b.record) - activityMs(a.record))
-    .map(session => toCapturedSession(session, home))
+  const sessions = uniqueLatest(
+    found
+      .filter(session => activityMs(session.record) >= cutoff)
+      .sort((a, b) => compareSessions(b, a, identity.accountId)),
+  ).map(session => toCapturedSession(session, home))
 
   const doc: CaptureFile = {
     capturedAt: new Date().toISOString(),
@@ -222,6 +224,34 @@ function parseSince(since: string) {
 
 function activityMs(record: DesktopRecord) {
   return record.lastActivityAt || record.createdAt || 0
+}
+
+/** After an account-switch reseed, the same chat exists under two account folders. Keep the newest. */
+function uniqueLatest<T extends {record: DesktopRecord}>(sessions: T[]) {
+  const seenSession = new Set<string>()
+  const seenCli = new Set<string>()
+  const unique: T[] = []
+  for (const session of sessions) {
+    const cli = session.record.cliSessionId
+    if (seenSession.has(session.record.sessionId)) continue
+    if (cli && seenCli.has(cli)) continue
+    seenSession.add(session.record.sessionId)
+    if (cli) seenCli.add(cli)
+    unique.push(session)
+  }
+  return unique
+}
+
+function compareSessions(
+  a: {accountId: string; record: DesktopRecord},
+  b: {accountId: string; record: DesktopRecord},
+  currentAccountId?: string,
+) {
+  const delta = activityMs(a.record) - activityMs(b.record)
+  if (delta) return delta
+  const aCurrent = a.accountId === currentAccountId ? 1 : 0
+  const bCurrent = b.accountId === currentAccountId ? 1 : 0
+  return aCurrent - bCurrent
 }
 
 function tildeHome(cwd: string | undefined, home: string) {
