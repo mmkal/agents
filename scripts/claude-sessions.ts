@@ -70,11 +70,11 @@ export async function capture(params: {
     count: sessions.length,
     sessions: sessions.map(session => ({
       title: session.title,
-      sessionId: session.sessionId,
-      cliSessionId: session.cliSessionId,
-      cwd: session.cwd,
+      lastActive: formatLastActive(activityMs(session.record)),
+      cwd: tildeHome(session.cwd, home),
       prs: session.prs.map(pr => pr.url),
     })),
+    instructions: `Run the following command to restore to Claude Desktop:\n\nnode scripts/claude-sessions.ts reseed --file ${file}`,
   }
 }
 
@@ -222,6 +222,34 @@ function parseSince(since: string) {
 
 function activityMs(record: DesktopRecord) {
   return record.lastActivityAt || record.createdAt || 0
+}
+
+function tildeHome(cwd: string | undefined, home: string) {
+  if (!cwd) return cwd
+  if (cwd === home) return '~'
+  if (cwd.startsWith(`${home}/`)) return `~${cwd.slice(home.length)}`
+  return cwd
+}
+
+function formatLastActive(then: number, now = Date.now()) {
+  const ago = Math.max(0, now - then)
+  const minute = 60_000
+  const hour = 3_600_000
+  const day = 86_400_000
+  if (ago < minute) return 'just now'
+  if (ago < hour) {
+    const n = Math.round(ago / minute) || 1
+    return n >= 60 ? '1 hour' : plural(n, 'minute')
+  }
+  if (ago < day) {
+    const n = Math.round(ago / hour) || 1
+    return n >= 24 ? '1 day' : plural(n, 'hour')
+  }
+  return plural(Math.round(ago / day) || 1, 'day')
+}
+
+function plural(n: number, unit: string) {
+  return n === 1 ? `1 ${unit}` : `${n} ${unit}s`
 }
 
 async function readDesktopSessions(userData: string) {
