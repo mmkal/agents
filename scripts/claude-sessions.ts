@@ -12,10 +12,11 @@
  * reseed copies those records into the currently signed-in account's folder. Quit Claude first
  * (or restart after) so it reloads from disk.
  */
+import {execFileSync} from 'node:child_process'
 import {existsSync} from 'node:fs'
 import {mkdir, readdir, readFile, writeFile} from 'node:fs/promises'
 import {homedir} from 'node:os'
-import {dirname, join, resolve} from 'node:path'
+import {basename, dirname, join, resolve} from 'node:path'
 import {createCli} from 'trpc-cli'
 import {parse as parseYaml, stringify as stringifyYaml} from 'yaml'
 
@@ -77,7 +78,7 @@ export async function capture(params: {
     sessions: sessions.map(session => ({
       title: session.title,
       lastActive: formatLastActive(activityMs(session.record)),
-      cwd: tildeHome(session.cwd, home),
+      repo: repoLabel(session.record, home),
       prs: session.prs.map(pr => pr.url),
     })),
     instructions: `Run the following command to restore to Claude Desktop:\n\nnode scripts/claude-sessions.ts reseed --file ${file}`,
@@ -170,6 +171,8 @@ type DesktopRecord = {
   cliSessionId?: string
   title?: string
   cwd?: string
+  originCwd?: string
+  worktreeName?: string
   createdAt?: number
   lastActivityAt?: number
   prs?: DesktopPr[]
@@ -263,6 +266,36 @@ function tildeHome(cwd: string | undefined, home: string) {
   if (cwd === home) return '~'
   if (cwd.startsWith(`${home}/`)) return `~${cwd.slice(home.length)}`
   return cwd
+}
+
+function repoLabel(record: DesktopRecord, home: string) {
+  const cwd = record.cwd
+  const root = record.originCwd || gitMainWorktree(cwd) || cwd
+  const worktree =
+    record.worktreeName || (root && cwd && cwd !== root ? basename(cwd) : undefined)
+  const repo = tildeHome(root, home) || ''
+  return worktree ? `${repo}\nworktree: ${worktree}` : repo
+}
+
+const gitMainWorktreeCache = new Map<string, string | undefined>()
+
+function gitMainWorktree(cwd?: string) {
+  if (!cwd) return undefined
+  if (gitMainWorktreeCache.has(cwd)) return gitMainWorktreeCache.get(cwd)
+  let root: string | undefined
+  try {
+    const common = execFileSync('git', ['-C', cwd, 'rev-parse', '--git-common-dir'], {
+      encoding: 'utf8',
+      stdio: ['ignore', 'pipe', 'ignore'],
+      timeout: 2000,
+    }).trim()
+    const commonAbs = common.startsWith('/') ? common : resolve(cwd, common)
+    root = basename(commonAbs) === '.git' ? dirname(commonAbs) : undefined
+  } catch {
+    root = undefined
+  }
+  gitMainWorktreeCache.set(cwd, root)
+  return root
 }
 
 function formatLastActive(then: number, now = Date.now()) {
