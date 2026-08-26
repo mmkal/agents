@@ -35,6 +35,8 @@ const MS: Record<string, number> = {
 export async function capture(params: {
   /** how far back to look. duration like 24h / 7d, an ISO timestamp, or `all`. default 24h */
   since?: string
+  /** only keep chats whose title matches this regex */
+  title?: string
   /** yaml output path. default claude-sessions-<timestamp>.ignoreme.yml in cwd */
   file?: string
   /** Claude Desktop userData dir. default ~/Library/Application Support/Claude */
@@ -46,6 +48,7 @@ export async function capture(params: {
   const userData = params.userData || defaultUserData(home)
   const since = params.since || '24h'
   const cutoff = parseSince(since)
+  const titleRe = params.title ? new RegExp(params.title) : undefined
   const file = resolve(params.file || `claude-sessions-${Date.now()}.ignoreme.yml`)
 
   const identity = await readIdentity(userData, home)
@@ -53,6 +56,7 @@ export async function capture(params: {
   const sessions = uniqueLatest(
     found
       .filter(session => activityMs(session.record) >= cutoff)
+      .filter(session => !titleRe || titleRe.test(session.record.title || 'Untitled session'))
       .sort((a, b) => compareSessions(b, a, identity.accountId)),
   ).map(session => toCapturedSession(session, home))
 
