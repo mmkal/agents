@@ -11,7 +11,8 @@
     "demo:sqlfu": "vitest run examples/sqlfu.test.ts",
     "demo:sqlfu:tart": "MACWRIGHT_TART=1 vitest run examples/sqlfu.test.ts",
     "demo:trpc-cli": "vitest run examples/trpc-cli.test.ts",
-    "demo:x": "vitest run examples/x.test.ts"
+    "demo:x": "vitest run examples/x.test.ts",
+    "claude-sessions": "node scripts/claude-sessions.ts"
   },
   "devDependencies": {
     "@types/node": "^25.9.1",
