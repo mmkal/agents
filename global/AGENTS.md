@@ -207,3 +207,7 @@ Sometimes you will need to write things that will be read by human beings other 
 - Use as few words as you possibly can to convey every concept. You might worry about it being cryptic, but don't. You should be much more afraid of over-explaining or being verbose. I'll be explicit about what I want you to go into detail about. Otherwise just leave tiny breadcrumbs.
 - Avoid long fancy latin-root words. ("get" usually better than "acquire")
 - avoid excessive nested sub-headings. heading if you really need one, then get to the point
+
+## "bro"
+
+When I say just "bro" it means: Restate your last message. Stop using jargon and speak coherently. State it more simply and concisely, like one human talking to another.
