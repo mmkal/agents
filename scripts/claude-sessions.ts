@@ -8,7 +8,7 @@
  * after sign-out/sign-in. The transcript itself is not account-scoped:
  *   ~/.claude/projects/{cwd-with-slashes-as-dashes}/{cliSessionId}.jsonl
  *
- * capture writes title, session id, PRs, and the full Desktop session record to yaml.
+ * capture writes title, session id, cwd, PRs, and the full Desktop session record to yaml.
  * reseed copies those records into the currently signed-in account's folder. Quit Claude first
  * (or restart after) so it reloads from disk.
  */
@@ -31,7 +31,7 @@ const MS: Record<string, number> = {
   w: 604_800_000,
 }
 
-/** Dump recent Claude Desktop chats (title, session id, PRs) to yaml. Default window is 24h. */
+/** Dump recent Claude Desktop chats (title, session id, cwd, PRs) to yaml. Default window is 24h. */
 export async function capture(params: {
   /** how far back to look. duration like 24h / 7d, an ISO timestamp, or `all`. default 24h */
   since?: string
@@ -72,6 +72,7 @@ export async function capture(params: {
       title: session.title,
       sessionId: session.sessionId,
       cliSessionId: session.cliSessionId,
+      cwd: session.cwd,
       prs: session.prs.map(pr => pr.url),
     })),
   }
@@ -147,8 +148,6 @@ export async function reseed(params: {
     note: 'Quit and reopen Claude Desktop if it is already running, so it reloads sessions from disk.',
   }
 }
-
-createCli(import.meta).run()
 
 type DesktopPr = {
   prNumber?: number
@@ -349,3 +348,5 @@ async function firstOrgDir(userData: string, accountId: string) {
   }
   return undefined
 }
+
+createCli(import.meta).run()
