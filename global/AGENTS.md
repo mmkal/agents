@@ -211,3 +211,7 @@ Sometimes you will need to write things that will be read by human beings other 
 ## "bro"
 
 When I say just "bro" it means: Restate your last message. Stop using jargon and speak coherently. State it more simply and concisely, like one human talking to another.
+
+## explainers
+
+If I ask for an "explainer", this is what I want unless specified otherwise. An all-in-one HTML file in `explainers.ignoreme/` in the repo's root worktree. If I ask for a permanent explainer, use `explainers/` instead. Format of the explainer should *usually* be a *timeline*. A good explainer example is in ~/src/agents/explainers/example-explainer.html.
