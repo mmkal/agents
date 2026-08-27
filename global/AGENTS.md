@@ -214,4 +214,26 @@ When I say just "bro" it means: Restate your last message. Stop using jargon and
 
 ## explainers
 
-If I ask for an "explainer", this is what I want unless specified otherwise. An all-in-one HTML file in `explainers.ignoreme/` in the repo's root worktree. If I ask for a permanent explainer, use `explainers/` instead. Format of the explainer should *usually* be a *timeline*. A good explainer example is in ~/src/agents/explainers/example-explainer.html.
+If I ask for an "explainer", this is what I want unless specified otherwise. An all-in-one HTML file in `explainers.ignoreme/` in the repo's root worktree. If I ask for a permanent explainer, use `explainers/` instead. Format of the explainer should *usually* be a *timeline*. A good explainer example is in ~/src/agents/explainers/example-explainer.html. Not all explainers fit this template, but features of that one I like:
+
+- Starts with a title, then instructions-for-use and an executive summary/takeaway
+- has a collapsible reference/glossary section for necessary terms for understanding - useful for someone new to the repo or coming back after a while
+- has *multiple* scenarios describing how the thing-being-explained behaves under different circumstances - allows showing the happy and sad paths
+- uses `<details>`/`<summary>` fairly liberally - for information that helps with a *deep* understanding but isn't essential for the gist
+- splits between LHS and RHS - and the paradigm is good:
+   - LHS=timeline (including *made up but realistic* actual times, useful for showing race conditions, timeouts, retries and the such like)
+   - timeline events have:
+      - labels (`@23`)
+      - titles (`agent/configured`)
+      - tags (`debounce=250ms`, `parsing=off` - low-cardinality helpful-to-eyeball elements of the "event")
+      - a human-readable summary of what this event signifies
+      - full detail shown as yaml on click-to-expand (using codemirror + syntax highlighting)
+   - RHS=state of the system (the example is for a true event-driven system, but for other systems this can be hand-waved)
+- Appendices: shows the result of comparative research for similar systems
+
+Additional things that can be useful for explainers:
+- call graph representations - plaintext often good enough, but can use mermaid/sequence diagrams where things get really complex
+
+Use the "bro" guidance on *yourself* for any section that's more than a couple of sentences long. If you think that results in loss of information, put your verbose version at the bottom in a `<details><summary>` collapsible.
+
+Big objects are easy to look at if you use yaml + codemirror, as in the example. That also allows you to put inline comments for extra explanation.
