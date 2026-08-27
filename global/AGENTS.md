@@ -237,3 +237,5 @@ Additional things that can be useful for explainers:
 Use the "bro" guidance on *yourself* for any section that's more than a couple of sentences long. If you think that results in loss of information, put your verbose version at the bottom in a `<details><summary>` collapsible.
 
 Big objects are easy to look at if you use yaml + codemirror, as in the example. That also allows you to put inline comments for extra explanation.
+
+When you create the explainer, use `open` to open it for me.
