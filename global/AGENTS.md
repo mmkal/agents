@@ -226,6 +226,7 @@ If I ask for an "explainer", this is what I want unless specified otherwise. An 
       - labels (`@23`)
       - titles (`agent/configured`)
       - tags (`debounce=250ms`, `parsing=off` - low-cardinality helpful-to-eyeball elements of the "event")
+      - timestamps (usually most useful "since start" e.g. `0ms`, `1.3s`, etc.)
       - a human-readable summary of what this event signifies
       - full detail shown as yaml on click-to-expand (using codemirror + syntax highlighting)
    - RHS=state of the system (the example is for a true event-driven system, but for other systems this can be hand-waved)
