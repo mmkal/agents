@@ -229,7 +229,7 @@ If I ask for an "explainer", this is what I want unless specified otherwise. An 
       - a human-readable summary of what this event signifies
       - full detail shown as yaml on click-to-expand (using codemirror + syntax highlighting)
    - RHS=state of the system (the example is for a true event-driven system, but for other systems this can be hand-waved)
-- Appendices: shows the result of comparative research for similar systems
+- Appendices: shows the result of comparative research for similar systems (use judgement on whether to do this research, it isn't *always* applicable)
 
 Additional things that can be useful for explainers:
 - call graph representations - plaintext often good enough, but can use mermaid/sequence diagrams where things get really complex
