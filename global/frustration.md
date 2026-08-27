@@ -438,3 +438,22 @@ metaphor is doubly wrong: the word is banned, and the framing is vestigial
 (describing the new design by reference to the old one). Name things for
 what they ARE (e.g. contextItems, timeline, standing document), never for
 what they replace.
+
+---
+
+**Agent:** Claude Code (claude-fable-5) · **Session:** 6fca697f-3bc3-4528-8bff-b26e8884b991 · **Time:** 2026-08-26T12:42Z (PR iterate/iterate#2519 review comment)
+
+**Message:** "This TRIVIAL function is actually used in exactly ONE place and is unit tested up the wazoo. What a waste of tokens. Just fuckin inline you moron"
+
+**Summary:** A one-line status check was extracted into an exported helper with its own type and a dedicated unit test:
+
+```ts
+// project-worker-health-logic.ts
+export function selectWorkerBuildFailure(worker: WorkerSlot | null | undefined): WorkerBuildFailureFact | null {
+  if (!worker || worker.status !== "update-failed") return null;
+  return { at: worker.at, commitOid: worker.commitOid, error: worker.error || "…" };
+}
+// + 28 lines of tests; exactly one callsite
+```
+
+Wanted: `const buildFailure = workerOutcome?.status === "update-failed" ? workerOutcome : null;` at the callsite. Pattern: single-use trivial helpers + unit tests for them = token waste and extra indirection; inline unless reused.
