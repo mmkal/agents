@@ -235,6 +235,8 @@ If I ask for an "explainer", this is what I want unless specified otherwise. An 
 Additional things that can be useful for explainers:
 - call graph representations - plaintext often good enough, but can use mermaid/sequence diagrams where things get really complex
 
+The explainer should usually be "from first principles". It will sometimes be read by people with no context and if you fill it with jargon they wouldn't have the slightest clue what it's on about.
+
 Use the "bro" guidance on *yourself* for any section that's more than a couple of sentences long. If you think that results in loss of information, put your verbose version at the bottom in a `<details><summary>` collapsible.
 
 Big objects are easy to look at if you use yaml + codemirror, as in the example. That also allows you to put inline comments for extra explanation.
