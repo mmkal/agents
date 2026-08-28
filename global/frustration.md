@@ -465,3 +465,23 @@ Wanted: `const buildFailure = workerOutcome?.status === "update-failed" ? worker
 **Message:** "You were on a stupid model. capture the initial request, the plan you made, the feedback I gave, and the takeaways. re-think the initial request from the top just in case your stupid younger brother came up with something bad."
 
 Misha discovered mid-session that the planning + implementation for a large mobile refactor (PR #2542) had run on a weaker model than intended (the session later switched to claude-fable-5). Frustration is about model selection going unnoticed, not the work itself — but it forced a full skeptical re-audit of an already-pushed branch. The weaker model's plan contained at least one confidently-stated false claim (that `@expo/fingerprint` doesn't read `eas.json`) which only got caught because the plan happened to mark measurement as non-optional.
+
+---
+- agent: Claude Code (claude-fable-5)
+- session: 14b5556a-4238-462b-817c-f4b02b1c9911 ("Mobile live status icons", iterate repo)
+- time: 2026-08-28T~19:30Z
+- message: "ok so AS ALWAYS your contravening of the lint rule and INSISTING that you MUST look for `state: \"detached\"` was just you being a slave to YOUR OWN BAD UI"
+
+Summary: While building a phase indicator (glyph next to a spinner), the agent designed the UI so some states showed NO glyph. That forced the Playwright spec into a negative assertion (`waitFor({state: "hidden"})` — a workaround-shaped wait), and caused a real UX defect: the status text shifted left/right as the glyph appeared/disappeared between phases. The user had to diagnose it themselves. The fix was trivial — a fallback glyph for every state — which simultaneously fixed the layout shift AND let the spec use a positive assertion (`getByLabel("waiting for a response")`).
+
+Lesson shape: when a test can only express a state as the ABSENCE of UI, treat that as a product-design smell, not a test problem — the missing state probably deserves its own affordance. The agent instead built machinery around the absence.
+
+```tsx
+// agent's design: absence as a state → layout shift + negative assertion
+{phase === "writing" ? "✎" : phase === "running" ? "▶" : null}
+await glyph.waitFor({ state: "hidden" }); // "we know nothing" asserted as nothing
+
+// user's fix: every state visible → stable layout + positive assertion
+{phase === "writing" ? "✎" : phase === "running" ? "▶" : "⧗"}
+await card.getByLabel("waiting for a response").waitFor();
+```
