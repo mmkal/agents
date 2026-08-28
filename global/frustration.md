@@ -485,3 +485,27 @@ await glyph.waitFor({ state: "hidden" }); // "we know nothing" asserted as nothi
 {phase === "writing" ? "✎" : phase === "running" ? "▶" : "⧗"}
 await card.getByLabel("waiting for a response").waitFor();
 ```
+
+---
+
+**Agent:** Claude Code (session `726a54ca-dad8-443b-8e01-bfd6ee75ae1f`, "mobile build state module")
+**Timestamp:** 2026-08-28T21:50Z
+**Message:** "what a fuckin word salad. What is it telling me? What is 'its own default channel' even? What do the two actions do? Which one should I tap? [...] so tbh no idea what state i'm in"
+
+Misha field-tested PR #2542's install flow on his phone and hit two things at once:
+
+1. A jargon-dense Alert on first boot: `Cleared the preview-channel override "mobile-voice-client" — this install runs its own default channel. Scan a PR's QR to point it at a preview channel again.` with two unexplained actions (OK / Pull latest now). The copy assumed the reader holds the whole channel/override mental model. Fix was structural, not wordsmithing: kill the modal, open the Build info screen instead, where labeled rows and buttons carry the explanation.
+
+```
+// the state machine he then fell into (the actual bug):
+Switch to main (preview)  →  override persisted, but main serves a different
+                             runtime → nothing to pull → "nothing happened"
+kill + relaunch           →  expo-updates finds nothing runnable for `preview`
+                             → falls back to EMBEDDED (older!) JS
+Build info                →  Updates.channel now reports the OVERRIDE (it's the
+                             effective channel, merged at launch) → "default for
+                             this build = preview" → app computes not-overridden
+                             → no reset button, no way back, "no idea what state i'm in"
+```
+
+Takeaway pair: (a) system-state modals with mystery buttons are word salad by construction — route to a screen that shows the state instead; (b) `Updates.channel` is the *effective* channel, not the baked one — treating it as "the build's default" hid every recovery path exactly when one was needed.
