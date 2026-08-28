@@ -457,3 +457,11 @@ export function selectWorkerBuildFailure(worker: WorkerSlot | null | undefined):
 ```
 
 Wanted: `const buildFailure = workerOutcome?.status === "update-failed" ? workerOutcome : null;` at the callsite. Pattern: single-use trivial helpers + unit tests for them = token waste and extra indirection; inline unless reused.
+
+---
+
+**Agent:** Claude Code (session `726a54ca-dad8-443b-8e01-bfd6ee75ae1f`, "mobile build state module")
+**Timestamp:** 2026-08-28T17:30Z
+**Message:** "You were on a stupid model. capture the initial request, the plan you made, the feedback I gave, and the takeaways. re-think the initial request from the top just in case your stupid younger brother came up with something bad."
+
+Misha discovered mid-session that the planning + implementation for a large mobile refactor (PR #2542) had run on a weaker model than intended (the session later switched to claude-fable-5). Frustration is about model selection going unnoticed, not the work itself — but it forced a full skeptical re-audit of an already-pushed branch. The weaker model's plan contained at least one confidently-stated false claim (that `@expo/fingerprint` doesn't read `eas.json`) which only got caught because the plan happened to mark measurement as non-optional.
