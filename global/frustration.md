@@ -509,3 +509,14 @@ Build info                →  Updates.channel now reports the OVERRIDE (it's th
 ```
 
 Takeaway pair: (a) system-state modals with mystery buttons are word salad by construction — route to a screen that shows the state instead; (b) `Updates.channel` is the *effective* channel, not the baked one — treating it as "the build's default" hid every recovery path exactly when one was needed.
+
+---
+
+**Agent:** Claude Code (session `726a54ca-dad8-443b-8e01-bfd6ee75ae1f`, "mobile build state module")
+**Timestamp:** 2026-08-29T16:10Z
+**Message:** "Still broken... This copy (screenshot attached) is still ass. Make it clearer. Bro. Clicking 'Switch to main (preview)' now does nothing on the native install from your PR"
+
+Second field-test round on PR #2542. Two compounding causes:
+
+1. The "still ass" copy was the OLD alert served from the binary's EMBEDDED bundle — builds are reused per branch, so first-boot UX is frozen at build-trigger time regardless of what's been fixed and published since. The fix had already shipped; the phone couldn't see it until one OTA pull. Agents should predict this ("your first boot will still show the old X") instead of claiming a fix is live everywhere.
+2. "Does nothing": the switch outcome was one line of small grey text, and button errors weren't rendered at all (`void mutateAsync` swallowed rejections). Feedback that a user can miss IS "nothing happened" — outcomes need to be cards/loud, and every fire-and-forget mutation needs a visible error path.
