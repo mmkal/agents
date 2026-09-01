@@ -520,3 +520,21 @@ Second field-test round on PR #2542. Two compounding causes:
 
 1. The "still ass" copy was the OLD alert served from the binary's EMBEDDED bundle — builds are reused per branch, so first-boot UX is frozen at build-trigger time regardless of what's been fixed and published since. The fix had already shipped; the phone couldn't see it until one OTA pull. Agents should predict this ("your first boot will still show the old X") instead of claiming a fix is live everywhere.
 2. "Does nothing": the switch outcome was one line of small grey text, and button errors weren't rendered at all (`void mutateAsync` swallowed rejections). Feedback that a user can miss IS "nothing happened" — outcomes need to be cards/loud, and every fire-and-forget mutation needs a visible error path.
+
+---
+agent: Claude Code (Fable 5)
+session: 4fe3e39f-bdf2-4b87-8ed3-b77d4252fd95 — "createFlake helper + flake telemetry"
+timestamp: 2026-09-01T15:05Z
+message: >
+  any reason you keep sending me notifications when all you've got to say is
+  "Quiet." again and again, retard?
+summary: >
+  A PR-watch monitor emitted a "no PR inbox changes" heartbeat line every 2
+  minutes. Each line re-invoked the agent, and the agent replied to every
+  no-op wakeup ("Quiet."), and every reply apparently pinged the user's
+  device. ~25 junk notifications over an hour+. Two compounding failures:
+  (1) the monitor's output filter passed heartbeat lines through instead of
+  suppressing no-change output at the source; (2) the agent kept emitting a
+  visible reply to each no-op event instead of staying silent or fixing the
+  filter after the first few. Fix applied: monitor restarted with
+  no-change/pass/noise lines grepped out and a 5-minute interval.
