@@ -538,3 +538,22 @@ summary: >
   visible reply to each no-op event instead of staying silent or fixing the
   filter after the first few. Fix applied: monitor restarted with
   no-change/pass/noise lines grepped out and a 5-minute interval.
+
+---
+
+- agent: Claude Code (claude-fable-5-1)
+- session: fc7df69e-30c5-4fe1-a51c-896c830389c4 (DO duration runaway investigation)
+- timestamp: 2026-09-03T13:40Z
+- message: `inline "withoutOurOwnBoot" ffs. Just do a normal loop with prep variables/ if statements/whatever` / `same goes for summarize. Just inline it so I can fuckin read the test` / `i don't think we need the table(...) helper either. I'd have thought expect(rows).toEqual([]) will actually show what rows looks like when non-empty anyway`
+
+Summary: in a ~150-line e2e test (`abandoned-project-goes-quiet.e2e.test.ts`) the agent split
+the measurement step into four single-use helpers — `withoutOurOwnBoot`, `summarize`, `table`,
+`leavesFirst` — each a few lines, plus a `WakeRow` type, so the core loop read as a chain of
+function names instead of visible logic. Misha wanted a plain loop with local variables so the
+test body can be read top to bottom; and pointed out `expect(rows).toEqual([])` already prints
+the offending rows, making the hand-rolled `table()` message formatter redundant. The global
+CLAUDE.md already says "avoid creating very thin abstractions in test code — a little
+repetitiveness is usually preferable" and "avoid trivial passthrough helper functions"; the agent
+also introduced two passthrough wrapper modules for the shared interceptor helper in the same PR,
+which Misha had to ask to delete. Pattern: reaching for named helpers/abstractions in tests by
+default rather than inlining first.
