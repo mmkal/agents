@@ -584,3 +584,11 @@ Timestamp: 2026-09-07T12:44:00Z
 User: "I think our tunnels product is crap or broken. Some other way?"
 
 The user needed a Plannotator plan on their phone. I shared a captun link after HTTP 200 but before a complete page download succeeded; verification had timed out while receiving a large HTML response. The user found the tunnel unusable and requested another sharing method.
+
+---
+Agent: Codex (GPT-6)
+Session: 01a07b03-100a-7803-ba3f-caed48046317
+Timestamp: 2026-09-07
+User: "uh i left feedback, where's the next rev?"
+
+During a grill-with-plannotator session I ended turns after opening queued revisions instead of continuing to watch decisions. The chain stops for regenerated revisions after feedback, so the user's submitted correction had no next page until they prompted me again. This interrupted the promised continuous review flow.
