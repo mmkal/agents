@@ -557,3 +557,22 @@ repetitiveness is usually preferable" and "avoid trivial passthrough helper func
 also introduced two passthrough wrapper modules for the shared interceptor helper in the same PR,
 which Misha had to ask to delete. Pattern: reaching for named helpers/abstractions in tests by
 default rather than inlining first.
+
+---
+
+- agent: Claude Code (claude-fable-5-1)
+- session: fc7df69e-30c5-4fe1-a51c-896c830389c4 ("Cloudflare cost runaway investigation")
+- time: 2026-09-07 ~08:00 UTC
+- message: "wtf. awful. .make it exactly as i asked."
+
+Misha gave the exact wording he wanted for a Slack headline:
+
+> We're spending $xyz/day on durable objects based on current usage ($abc dev/preview, $def prd)
+
+and said the rest could go in a click-to-reveal table. The mockup I DM'd him
+was four lines: his sentence reworded ("about $830/day ... going by the last
+24 hours"), plus an invented "latest hour is running hotter" line, plus a 🚨
+line, plus a trailer with a date stamp and an arrow to the thread. I treated
+an exact spec as a starting point and padded it with things I thought were
+useful. When the user writes the output verbatim, produce that verbatim; put
+extras in the "rest" they explicitly allowed, or don't add them.
