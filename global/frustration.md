@@ -592,3 +592,28 @@ Timestamp: 2026-09-07
 User: "uh i left feedback, where's the next rev?"
 
 During a grill-with-plannotator session I ended turns after opening queued revisions instead of continuing to watch decisions. The chain stops for regenerated revisions after feedback, so the user's submitted correction had no next page until they prompted me again. This interrupted the promised continuous review flow.
+
+
+---
+
+Agent: Codex
+Session: `01a07b03-100a-7803-ba3f-caed48046317`
+Timestamp: 2026-09-07
+
+> “oof wtf is that. we should NOT be adding another code path for `intercepted/gateway/*`”
+> “yeah bad tradeoff, you should have changed the contract and migrated existing tests, especially since most/all existing tests are using a higher-level helper anyway!”
+
+The AI cost-control implementation preserved an old interception shortcut and introduced a second namespace for realistic gateway fixtures. This split LLM request preparation and response decoding instead of changing the existing interceptor contract and adapting the shared test helper. The user also found duplicated provider-request construction in egress and asked to keep all subsequent revisions unstaged for close review.
+
+The user also objected to unnecessary file proliferation: “i don't like aiTextResponse being in yet another separate file, too many small files that i need to remember the difference between. same goes for ai-request.ts i think”. The implementation had split request preparation and fixture encoding into additional small modules despite existing transport and interception-helper files.
+
+
+---
+
+Agent: Codex (GPT-6 Astra)
+Session: 01a07c72-198e-7bd1-92ce-2de427261eb3
+Timestamp: 2026-09-07T17:05:02.149688+01:00
+
+User: "awful, i want it to be a full 3d model of my head and it should be looming over london"
+
+The user wanted a Blender recreation of their head inspired by the Kit Langton demo. I delivered a photo projected onto a shallow surface intended for one camera angle, with added hair curves. It did not provide the complete, viewable 3D head they expected. They rejected the result and clarified that the head should loom over London.
