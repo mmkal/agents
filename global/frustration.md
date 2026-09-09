@@ -637,3 +637,23 @@ Timestamp: 2026-09-08T20:27:38.952327+00:00
 User: “First floor is all fucked up. There's a wall blocking the way.”
 
 The Hardway walkthrough still had a wall blocking the upstairs landing after multiple stair/layout fixes and claims that walking checks passed. Earlier checks reached the stair top but did not continue through the landing to each upstairs room. The modeled opening was over the stairwell rather than the usable corridor, leaving the actual route blocked.
+
+---
+
+Agent: Codex
+Session: 01a07b03-100a-7803-ba3f-caed48046317
+Timestamp: 2026-09-09T15:21:55.732601+00:00
+
+User: “I've closed your PR. Do not create slop PRs against external repos”
+
+A request to let AI interceptors return native Response objects, including SSE, expanded into an external Cap’n Web PR and a global RPC dependency upgrade. The agent opened the external PR before the full application streaming path passed; cancellation still failed after the proposed fix. The user objected to that scope expansion and closed the PR.
+
+---
+
+Agent: Codex
+Session: 01a081f0-de66-77c3-9cbe-ee84ef7da965
+Timestamp: 2026-09-09T18:05:45.133743+01:00
+
+User: “the goalkeeper is too crap. he should JUMP to dive, and gravity should affect him ... right now he just kinda falls to the side and his leg clips into the ground. Also he should be the same character who's doing the yoga and weightlifting and stuff.”
+
+The penalty goalkeeper tipped sideways instead of jumping into a physical dive, and his leg intersected the ground. He also used a different character model from the established yoga/weightlifting NPC. The previous result missed both the expected motion and visual consistency.
