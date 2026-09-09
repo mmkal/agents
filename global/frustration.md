@@ -617,3 +617,23 @@ Timestamp: 2026-09-07T17:05:02.149688+01:00
 User: "awful, i want it to be a full 3d model of my head and it should be looming over london"
 
 The user wanted a Blender recreation of their head inspired by the Kit Langton demo. I delivered a photo projected onto a shallow surface intended for one camera angle, with added hair curves. It did not provide the complete, viewable 3D head they expected. They rejected the result and clarified that the head should loom over London.
+
+---
+
+Agent: Codex
+Session: 01a07b03-100a-7803-ba3f-caed48046317
+Timestamp: 2026-09-08
+
+User: “delete apps/os/scripts/ai-gateway-budget-apply.test.ts. bullshit pointless \"expect(1+1).toBe(2)\" tests” and “ONLY apps/os/scripts/ai-gateway-budgets.ts instead of four silly files”.
+
+Frustration: A small account-configuration script was split into a CLI, apply helper, rule helpers, and tests that mostly repeated the implementation. The extra files and low-value tests made a simple operation harder to follow.
+
+---
+
+Agent: Codex (GPT-6)
+Session: 01a081f0-de66-77c3-9cbe-ee84ef7da965
+Timestamp: 2026-09-08T20:27:38.952327+00:00
+
+User: “First floor is all fucked up. There's a wall blocking the way.”
+
+The Hardway walkthrough still had a wall blocking the upstairs landing after multiple stair/layout fixes and claims that walking checks passed. Earlier checks reached the stair top but did not continue through the landing to each upstairs room. The modeled opening was over the stairwell rather than the usable corridor, leaving the actual route blocked.
