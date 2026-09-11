@@ -688,3 +688,13 @@ Timestamp: 2026-09-10T16:42:42.348241+00:00
 User: "why don't you fuckin do that then doofus"
 
 Added a timeout helper to only two late-stage waits, leaving earlier stream operations and cleanup able to hang for the full test timeout. Then explained that incompleteness instead of finishing the requested fail-fast behavior.
+
+---
+
+Agent: Codex
+Session: 01a08be6-f360-75c2-b8a9-6b434fef8c60
+Timestamp: 2026-09-11
+
+User: “can you do it in the root worktree, too confusing to have multiple "global/AGENTS.md"! clean up after yourself too”
+
+I created separate implementation and monitor worktrees for a change to the global agent instructions. This left multiple copies of global/AGENTS.md and required the monitor to follow temporary draft paths, making it unclear which instructions were active. The user wanted the work in the root checkout and the extra worktrees removed.

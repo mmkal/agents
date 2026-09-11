@@ -27,7 +27,7 @@ Repeated registrations from the same owner update the expiry and context without
 
 Use `automation_update` to create or update one heartbeat targeting this monitor task, every 20 minutes. Save its returned ID. Resume it on registration and pause it when the registry has no active PRs. Preserve unrelated fields on updates. Before creating a schedule after missing state, inspect existing automations and reuse the matching monitor heartbeat. Never attach it to an implementation task.
 
-When testing an unmerged protocol, the heartbeat may point to its draft checkout. Switch to the root protocol only once that file is present with the merged changes; a GitHub merge alone does not update the local checkout. Keep the draft checkout available until the switch.
+Keep the monitor task and its protocol in the agents root checkout. Do not create a separate monitor worktree.
 
 Saved prompt:
 
