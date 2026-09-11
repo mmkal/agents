@@ -30,7 +30,7 @@ Only the monitor normally writes `state.ignoreme/registry.json`. Read it every t
 
 Keep `automationId` and a record per PR containing owner task/host/worktree, expiry, current head, last successful check, consecutive read failures, observed feedback/checks, and delivery history. Each delivery has a stable batch ID, source links/fingerprints, pending/sent/acknowledged status, and owner outcome. Re-registering updates expiry/context without resetting history. A different owner requires clarification before transfer; retain the current owner meanwhile.
 
-Use `automation_update` for one 20-minute heartbeat targeting this monitor task. Save the returned ID, resume on registration, and pause when no active PRs remain. If the saved ID is missing, inspect existing automations before creating one. Preserve unrelated fields on updates. This local monitor needs the desktop app running and the machine awake.
+Use `automation_update` for one 5-minute heartbeat targeting this monitor task. Save the returned ID, resume on registration, and pause when no active PRs remain. If the saved ID is missing, inspect existing automations before creating one. Preserve unrelated fields on updates. This local monitor needs the desktop app running and the machine awake.
 
 The saved prompt should say:
 
