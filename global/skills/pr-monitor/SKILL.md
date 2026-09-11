@@ -14,10 +14,15 @@ A detached process that only writes `gh` output to a log file is not a monitor. 
 Only say a PR is being monitored when one of these is true:
 
 - you are keeping a foreground polling loop active in the current turn and will act on changes before final response;
+- you have a confirmed registration with the global Codex monitor and its active heartbeat;
 - you have dispatched an external event-driven agent/workflow that can act independently;
 - you clearly tell the user the monitor is only a passive log and will not wake you.
 
-## Quick Start
+## Codex monitoring
+
+For ongoing monitoring in Codex, use the [global monitor protocol](references/global-monitor.md). Register with the single task identified in `~/src/agents/global/pr-monitor.md`; keep scheduled wakeups out of implementation conversations. Read that protocol when registering PRs, running the monitor, or acknowledging its alerts.
+
+## Foreground checks and other agents
 
 Run the helper in the foreground while you continue PR work:
 
@@ -83,11 +88,11 @@ gh run view <run-id> --job <job-id> --log-failed
 
 Do not assume red CI is caused by your change. If the failure is unrelated or flaky, say so, but still either rerun it or explain why not.
 
-## Long-Running Monitoring
+## Other long-running environments
 
-Current agent threads cannot be woken by a background shell process after final response. For a real 24-hour monitor, dispatch an event-driven workflow/agent instead of starting `nohup`.
+A detached shell process does not by itself wake an agent after final response. In Codex, use the global scheduled monitor above. Without Codex task tools, use a supported external workflow rather than pretending a background log is active monitoring.
 
-In this repo, the closest current stopgap is Pullfrog:
+For example, when authorized to dispatch Pullfrog:
 
 ```bash
 gh workflow run pullfrog.yml -R iterate/iterate -r main \
