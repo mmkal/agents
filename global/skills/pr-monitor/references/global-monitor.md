@@ -27,6 +27,8 @@ Repeated registrations from the same owner update the expiry and context without
 
 Use `automation_update` to create or update one heartbeat targeting this monitor task, every 20 minutes. Save its returned ID. Resume it on registration and pause it when the registry has no active PRs. Preserve unrelated fields on updates. Before creating a schedule after missing state, inspect existing automations and reuse the matching monitor heartbeat. Never attach it to an implementation task.
 
+When testing an unmerged protocol, the heartbeat may point to its draft checkout. Switch to the root protocol only once that file is present with the merged changes; a GitHub merge alone does not update the local checkout. Keep the draft checkout available until the switch.
+
 Saved prompt:
 
 > Check the registered PRs using the global PR monitor protocol in ~/src/agents/global/skills/pr-monitor/references/global-monitor.md and runtime registry in ~/src/agents/pr-monitor.ignoreme/registry.json. Route only new actionable feedback or CI failures to their owning tasks. Stay quiet when nothing actionable changed. Stop each registration on merge, close, or expiry; pause this heartbeat when none remain. Report persistent monitoring or delivery failures. Do not edit watched repos or handle GitHub reviews yourself.
