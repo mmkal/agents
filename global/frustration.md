@@ -657,3 +657,34 @@ Timestamp: 2026-09-09T18:05:45.133743+01:00
 User: “the goalkeeper is too crap. he should JUMP to dive, and gravity should affect him ... right now he just kinda falls to the side and his leg clips into the ground. Also he should be the same character who's doing the yoga and weightlifting and stuff.”
 
 The penalty goalkeeper tipped sideways instead of jumping into a physical dive, and his leg intersected the ground. He also used a different character model from the established yoga/weightlifting NPC. The previous result missed both the expected motion and visual consistency.
+
+---
+
+Agent: Codex
+Session: 01a08a86-bbfa-7140-a095-b80ab2d67142
+Timestamp: 2026-09-10
+
+User: “i merged for now. we might do a followup. but i don't like your overcomplicated snapshot idea”
+
+The user wanted PR changed-line metadata to avoid full Git history in CI. I proposed a permanent baseline commit and spent too much explanation on a different exemption model. They wanted the simpler split: local blame/date checks, PR changed-line checks.
+
+
+---
+
+Agent: Codex
+Session: 01a08add-a4a7-7b00-9d1b-f9eeb9cec292
+Timestamp: 2026-09-10T15:19:51.724312+01:00
+
+User: “it's still bad. do you think we should switch to plate?”
+
+Repeated narrow fixes to the Docs editor (formatting shortcuts, inline-code contrast, Tab indentation) passed targeted checks but did not produce a satisfactory writing experience. The initial investigation also used an outdated checkout and incorrectly claimed the deployed app lacked its Atomic live editor. The user is now questioning the editor choice rather than requesting another isolated patch.
+
+---
+
+Agent: Codex
+Session: 01a07b03-100a-7803-ba3f-caed48046317
+Timestamp: 2026-09-10T16:42:42.348241+00:00
+
+User: "why don't you fuckin do that then doofus"
+
+Added a timeout helper to only two late-stage waits, leaving earlier stream operations and cleanup able to hang for the full test timeout. Then explained that incompleteness instead of finishing the requested fail-fast behavior.
