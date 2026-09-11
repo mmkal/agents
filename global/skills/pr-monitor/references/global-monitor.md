@@ -4,7 +4,7 @@ One persistent Codex task in the agents project receives registrations from ever
 
 ## Registration from an implementation task
 
-Read `~/src/agents/global/pr-monitor.md` for the monitor task ID and host. Use Codex's `send_message_to_thread` with a plain-language message containing:
+Read `monitor.taskId` and `monitor.host` from `~/src/agents/pr-monitor.ignoreme/registry.json`. Use those values as the destination for Codex's `send_message_to_thread` with a plain-language message containing:
 
 - the canonical PR URL;
 - your actual Codex task ID and host (not a guessed session ID), and worktree path;
@@ -15,11 +15,11 @@ Example: “Watch https://github.com/iterate/iterate/pull/1234 for task <id> on 
 
 Registration authorizes the monitor to send PR-related messages back to the owning task. It does not authorize unrelated messages or work. Wait for a registration acknowledgement using `wait_threads`; do not claim monitoring is active until the registry and schedule are confirmed. Do not keep waiting for the whole monitoring period.
 
-If the stored task cannot be reached, report that monitoring is unavailable. Do not silently create another monitor. Replacing the global task requires the user to request it and the pointer to be updated. If a prior heartbeat watches this same PR in your own task, pause it only after the new registration is confirmed; preserve unrelated automation fields. Do not migrate other tasks' schedules.
+If the registry or address is missing, or the stored task cannot be reached, report that monitoring is unavailable. Do not silently create another monitor. Replacing the global task requires the user to request it and the registry address to be updated. If a prior heartbeat watches this same PR in your own task, pause it only after the new registration is confirmed; preserve unrelated automation fields. Do not migrate other tasks' schedules.
 
 ## Monitor state and scheduling
 
-Only the monitor writes `~/src/agents/pr-monitor.ignoreme/registry.json`. Create it if absent. Keep runtime state out of commits. Persist after each registration, observed change, and delivery result using a temporary file and atomic rename. Read it on every turn; conversation history is not the registry.
+Only the monitor writes `~/src/agents/pr-monitor.ignoreme/registry.json`. During initial setup, create it with your actual task ID and host in `monitor.taskId` and `monitor.host`; update them after a task handoff. Keep runtime addresses and state out of commits. Persist after each registration, observed change, and delivery result using a temporary file and atomic rename. Read it on every turn; conversation history is not the registry.
 
 Keep an automation ID and a record per canonical PR URL with owner task ID/host, worktree, expiry, head SHA, last successful check, consecutive query failures, observed comment IDs/update times, check IDs/attempts/statuses, and delivery records. Delivery records contain a stable batch ID, source links/fingerprints, pending/sent/acknowledged status, and owner outcome. Use a readable JSON object; do not build a database or command parser for natural-language registrations.
 
