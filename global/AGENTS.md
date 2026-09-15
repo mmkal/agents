@@ -35,6 +35,8 @@ If I ask you to "worktreeify" a task, it's essentially the above process: create
 
 When you think you're done with a task that has a branch/pull request, move it to complete on that branch and update the pull request body. I might still give you more work to do - that's ok, it'll only be in the `complete` folder when we merge.
 
+If I say "no PR" or similar when asking you to worktreeify (e.g. "ok worktreeify the proposed changes. No PR pls"), stop short of actually creating the PR. Instead, put your proposed up-to-date pull request body at the end of each commit message, and reply to me in the session chat with the github compare link.
+
 Much of my day is often taken up reviewing and iterating on your bedtime work. I'll do this via a mixture of GitHub comments and direct prompting to you. When I leave comments, you should reply to them but start your replies with "🤖" because it looks otherwise like me talking to me. As soon as you see a comment, react to it with 👀 so I know it's been picked up, and remove the 👀 reaction once you've replied. Always resolve comments once you've handled them (which could mean accepting their premise, and making a change accordingly or it might mean replying saying "you are wrong about that").
 
 If I ask you to "unworktreeify", it means I want you to bring changes from a separate worktree over to the main worktree. I do this sometimes when I want to poke at the code in my IDE, which usually I have open only looking at the root worktree. When doing that you can just stash any pending changes and just tell me that you did that and the name of the stash you created.
