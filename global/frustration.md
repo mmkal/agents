@@ -688,3 +688,14 @@ Timestamp: 2026-09-10T16:42:42.348241+00:00
 User: "why don't you fuckin do that then doofus"
 
 Added a timeout helper to only two late-stage waits, leaving earlier stream operations and cleanup able to hang for the full test timeout. Then explained that incompleteness instead of finishing the requested fail-fast behavior.
+
+
+---
+
+Agent: Codex (GPT-6)
+Session: 01a09f76-402e-7360-bd33-0f5843035ea8
+Timestamp: 2026-09-14T11:03:17.296230+00:00
+
+User: “11: Consume a pinned argument: bad. Wtf? I don't even understand how that rule works or why? What's the use case?”
+
+The itx explainer exposed an existing rewrite rule that matches and silently consumes leading arguments. The user found that behavior surprising and its purpose unclear. They also challenged the recommendation to retain position-dependent meanings for @ and special object-merge precedence instead of ordinary argument binding and spread semantics.
