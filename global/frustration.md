@@ -741,3 +741,37 @@ Session: 01a0a1ab-102e-7c52-8759-c9f564b1aae5
 User: “figure it out bro”
 
 After the user showed that the delivered trace links did not display the promised breakdown, I confirmed the spans existed through the API but ended my answer with the dashboard discrepancy still unexplained. The user had to explicitly tell me to finish investigating why the delivered result was unusable.
+
+
+---
+
+Timestamp: 2026-09-15T17:18:29.582138+00:00
+Agent: Codex (GPT-6)
+Session: 01a0a1e6-0135-7902-91aa-b4bb07026de2
+
+User: “this is bad. close the PR, keep the branch, and let's just work on the compare link
+way too much special-casing for preview_1. this is a good example of something where if the requirements are forcing you to introduce sloppy code, you should push back on the requirements rather than just blindly plowing on”
+
+The user wanted main to exercise the PR preview path and suggested reserving preview-1. I implemented that suggestion with slot-specific rules across the allocator, coordinator, runner, cleanup, workflow, and tests, then added more exceptions while fixing review findings. I treated the proposed reservation as fixed instead of challenging it when it made the code substantially more complex. The user rejected the design and asked to close the PR while retaining the branch for compare-link review.
+
+
+---
+
+Timestamp: 2026-09-15T17:40:44.549587+00:00
+Agent: Codex (GPT-6)
+Session: 01a0a1e6-0135-7902-91aa-b4bb07026de2
+
+User: “another thing that bugged me is the old assumption of 'context' = 'pull request' was still leaking all over the code and we just had helper functions to workaround that no-longer-true assumption - see if you can refactor that to be better too. Note that at time of writing I haven't looked at what you've done since you closed the PR”
+
+I added main preview execution while retaining a PR-shaped context and conversion helpers. The shared runner still received a nullable PR object and inspected it for app selection, slot requests and login setup, and generic deployment helpers still called their commit input pullRequestHeadSha. The user wanted the model corrected instead of preserving the old assumption behind wrappers.
+
+
+---
+
+Timestamp: 2026-09-15T19:02:36.423781+01:00
+Agent: Codex (GPT-6)
+Session: 01a0a1e6-0135-7902-91aa-b4bb07026de2
+
+User: “What about the risk map and stuff? have you not read our docs on pull requests?”
+
+The user requested a rundown of the main-preview/dashboard branch in the form of a prospective PR body. I listed additions, removals, motivation, and checks but omitted the risk map required by docs/pull-requests.md: the highest-risk changes, behavior and follow-ups on merge, and suggested review order. The guide had already been read, so the user had to remind me to apply it.
