@@ -814,3 +814,19 @@ confirmed that the newer main run really failed two cursor assertions, then
 stopped at explaining the Slack alerts. The user had to repeat the original
 problem to get the agent to continue through verifying a fix and the complete
 E2E run on current main.
+
+
+---
+
+Agent: Codex (GPT-6)
+Session: 01a0aa6a-d984-7a62-b9c7-f2152c987087
+Timestamp: 2026-09-16T15:33:43.967394+00:00
+
+> hmm so I don't love this. It is adding ugly test related stuff to our core, so it feels like it's probably the wrong direction.
+
+The preview-cleanup review branch embedded test-run concepts throughout core
+runtime code: preview/nonproduction guards, a test-specific Stream RPC,
+connection headers, and run lifecycle records. The user wanted a small way
+to stop recurring work and objected to the resulting CI coupling and repeated
+conditions. Review comments also questioned module placement and unclear
+truthiness checks.
