@@ -864,3 +864,14 @@ The CI tracing implementation spread one feature across fourteen files in the
 shared scripts/ci directory, including several tiny modules and five separate
 test files. The user objected to the file sprawl and the navigation overhead,
 and requested one tracing folder with a main module, CLI, test file and assets.
+
+
+---
+
+Agent: Codex (GPT-6)
+Session: 01a09f64-ea4e-7c61-ab0a-c15eb65df3bc
+Timestamp: 2026-09-16T20:55:14.759551+00:00
+
+> oh wow. just reading commitReport - so we're doing another commit of a generated html file for EVERY ci run? what the helly? can we instead just *not* use the explainers infrastructure which isn't for this at all
+
+CI tracing stored each generated HTML/JSON report in a new commit on an artifact branch and reused the explainer route. The user objected to turning Git and the explainer infrastructure into CI artifact storage when Depot already stores artifacts and the project already has a Depot token. This was unnecessary persistence and coupling for a report viewer.
