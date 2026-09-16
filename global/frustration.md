@@ -784,3 +784,33 @@ Codex · task `01a09f64-ea4e-7c61-ab0a-c15eb65df3bc` · 2026-09-16T10:23:26.9866
 > the status.ts CLI should use fucking trpc-cli. Don't we have tons of precedent for this and instructions?
 
 In the Playwright sharding experiment, Codex added a hand-written argv dispatcher instead of the repo’s established trpc-cli pattern. The new file led with schemas and test configuration rather than its commands, exported a helper class, and added a test file the user considered useless. The user asked for a command-first default class, deletion of that test file, and a clear explanation of the PR’s large changes.
+
+---
+
+Agent: Codex (GPT-6)
+Session: 01a0aa52-7476-7a10-967b-ba073794a81b
+Timestamp: 2026-09-16T13:31:54.306481+00:00
+
+> why is Niterate bot still spammin #error-pulse in slack then?
+
+After being asked to investigate E2E failures on main, the agent reported one
+commit green and said “No code changes needed so far,” despite six retries and
+a newer main run still pending. The user then saw another failure alert. The
+new run actually failed two cursor-state assertions on both attempts, distinct
+from the Cloudflare WebSocket failures diagnosed earlier. The prior answer
+made incomplete verification sound more reassuring than the evidence allowed.
+
+
+---
+
+Agent: Codex (GPT-6)
+Session: 01a0aa52-7476-7a10-967b-ba073794a81b
+Timestamp: 2026-09-16T13:58:46.199141+00:00
+
+> So... E2E failing on main
+
+After the user challenged the earlier claim that E2E was green, the agent
+confirmed that the newer main run really failed two cursor assertions, then
+stopped at explaining the Slack alerts. The user had to repeat the original
+problem to get the agent to continue through verifying a fix and the complete
+E2E run on current main.
