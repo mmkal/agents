@@ -830,3 +830,37 @@ connection headers, and run lifecycle records. The user wanted a small way
 to stop recurring work and objected to the resulting CI coupling and repeated
 conditions. Review comments also questioned module placement and unclear
 truthiness checks.
+
+
+---
+
+Agent: Codex (GPT-6)
+Session: 01a0aa6a-d984-7a62-b9c7-f2152c987087
+Timestamp: 2026-09-16T16:12:47.212229+00:00
+
+> hmm it still feels like a nasty hack to me, don't you agree? i don't like the idea of adding this to our core, even though it's a little better than the last iteration
+
+After the user objected to test-run retirement checks in core runtime code,
+the replacement generalized them into project lifetimes but still spread
+lifecycle checks and metadata across the product. The user remained unhappy
+with the intrusion into the core and asked to revisit cleanup options by
+resource, retirement method, and timing before pursuing an implementation.
+
+
+---
+
+Agent: Codex (GPT-6)
+Session: 01a09f64-ea4e-7c61-ab0a-c15eb65df3bc
+Timestamp: 2026-09-16T20:32:42.633104+00:00
+
+> also. i hate how many `trace-*` files you've added to scripts/ci/.
+> make `scripts/ci/tracing/` and i think we can conslidate TONS of them:
+> - trace-commands, trace-model, trace-operation, trace-puclication, trace-reporter, trace-viewer.ts -> tracing.ts
+> - trace.ts -> cli.ts
+> - keep .sh and .html file
+> - one big unit test file
+
+The CI tracing implementation spread one feature across fourteen files in the
+shared scripts/ci directory, including several tiny modules and five separate
+test files. The user objected to the file sprawl and the navigation overhead,
+and requested one tracing folder with a main module, CLI, test file and assets.
