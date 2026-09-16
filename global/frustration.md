@@ -775,3 +775,12 @@ Session: 01a0a1e6-0135-7902-91aa-b4bb07026de2
 User: “What about the risk map and stuff? have you not read our docs on pull requests?”
 
 The user requested a rundown of the main-preview/dashboard branch in the form of a prospective PR body. I listed additions, removals, motivation, and checks but omitted the risk map required by docs/pull-requests.md: the highest-risk changes, behavior and follow-ups on merge, and suggested review order. The guide had already been read, so the user had to remind me to apply it.
+
+
+---
+
+Codex · task `01a09f64-ea4e-7c61-ab0a-c15eb65df3bc` · 2026-09-16T10:23:26.986603+00:00
+
+> the status.ts CLI should use fucking trpc-cli. Don't we have tons of precedent for this and instructions?
+
+In the Playwright sharding experiment, Codex added a hand-written argv dispatcher instead of the repo’s established trpc-cli pattern. The new file led with schemas and test configuration rather than its commands, exported a helper class, and added a test file the user considered useless. The user asked for a command-first default class, deletion of that test file, and a clear explanation of the PR’s large changes.
