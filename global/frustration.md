@@ -886,3 +886,53 @@ Timestamp: 2026-09-17T06:22:10Z
 > Ok maybe check that before claiming victory. Might need to make a local poller or something to check?
 
 The agent called the early-green CI experiment successful after observing green once during cleanup and again at completion. Its observer stopped reading GitHub after the first success, so it had not checked whether later job steps temporarily turned the check yellow again. The user had to identify this gap and request continuous verification.
+
+
+---
+
+Agent: Codex
+Session: 01a0aa2e-dd8a-76f0-9c26-c6be9cb5fbed
+Timestamp: 2026-09-17T11:24:47.200259+01:00
+
+User message: "show me bitch"
+
+The user was iterating on a code sketch in chat and wanted the full recursive implementation with only commits passed to walk. The assistant kept explaining and confirming the argument change instead of showing the requested code.
+
+
+---
+
+Agent: Codex
+Session: 01a0aa2e-dd8a-76f0-9c26-c6be9cb5fbed
+Timestamp: 2026-09-17T11:37:56.426803+01:00
+
+User message: "oof, no that's worse again, now we've got mixed up recursion and mutable variables!"
+
+While discussing a recursive ancestry planner, the assistant removed a positional boolean argument by moving changing action requirements into a mutable closure. The user found mixing recursion and shared mutable state harder to understand and suggested merging immutable action requirements instead.
+
+
+---
+
+2026-09-17T14:58:11.345390+00:00 · Codex · session `01a0af72-1c49-71f1-bec8-12f918ada371`
+
+User: “oh WOW. lots of changes. were all those tests exercising real AI? christ … you have changed agent-host.ts … it is CRITICAL that you THOROUGHLY explain why you touched the core … pls update the Change / Purpose table then continue on getting it green”
+
+The strawman test-AI PR changed core agent and project execution, but its Change / Purpose table grouped those changes too broadly. It did not make the reason for changing agent-host.ts, the production wiring, or the extra policy lookup in ordinary runtime execution clear enough. The broad mechanical test diff also left it unclear which tests had actually invoked paid AI versus merely switching fixture creation.
+
+
+---
+
+2026-09-17T15:25:04.753321+00:00 · Codex · session `01a0af72-1c49-71f1-bec8-12f918ada371`
+
+User: “Could we just not have a policy? I don’t think I asked you for a policy did I? Our \"policy\" is the spending cap! It’s cruder but we MUST keep the code simple” and “Undo the policy shit”.
+
+Asked to intercept paid AI in tests, Codex added an immutable project AI policy, signup heuristics, an allowlist, persisted creation fields and a resolver lookup in the core agent turn loop. The user rejected the extra runtime mechanism and the changes it required across core and fixtures. The intended boundary was test setup using existing intercepted models, with the spending cap as the backstop.
+
+---
+
+Timestamp: 2026-09-17T15:54:42.635234+00:00
+Agent: Codex
+Session: 01a0af72-1c49-71f1-bec8-12f918ada371
+
+User: “yeah. what the helly man. i think we need those interceptions back!”
+
+After rejecting an unrequested project AI policy, the user expected the test interceptions to remain. The agent removed most of the interception setup and scripted tests together with the policy, reducing the diff from 90 files to 7 and leaving the original spending problem unresolved. The user had to ask for the useful interceptions to be restored.
