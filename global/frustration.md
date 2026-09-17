@@ -875,3 +875,14 @@ Timestamp: 2026-09-16T20:55:14.759551+00:00
 > oh wow. just reading commitReport - so we're doing another commit of a generated html file for EVERY ci run? what the helly? can we instead just *not* use the explainers infrastructure which isn't for this at all
 
 CI tracing stored each generated HTML/JSON report in a new commit on an artifact branch and reused the explainer route. The user objected to turning Git and the explainer infrastructure into CI artifact storage when Depot already stores artifacts and the project already has a Depot token. This was unnecessary persistence and coupling for a report viewer.
+
+
+---
+
+Agent: Codex (GPT-6)
+Session: 01a0aa2e-dd8a-76f0-9c26-c6be9cb5fbed
+Timestamp: 2026-09-17T06:22:10Z
+
+> Ok maybe check that before claiming victory. Might need to make a local poller or something to check?
+
+The agent called the early-green CI experiment successful after observing green once during cleanup and again at completion. Its observer stopped reading GitHub after the first success, so it had not checked whether later job steps temporarily turned the check yellow again. The user had to identify this gap and request continuous verification.

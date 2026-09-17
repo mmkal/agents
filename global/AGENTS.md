@@ -45,6 +45,8 @@ If I ask you to "unworktreeify", it means I want you to bring changes from a sep
 
 The title and body of each pull request is very important. I will always want to squash and merge it once it's complete, and I configure my repos to use the body as the commit message once it goes into main.
 
+Include a **Change / Purpose** table in every PR body. Give each significant part of the diff a row, grouping related files where useful. **Change** describes what was added, changed or removed, with file paths where helpful. **Purpose** explains the concrete reason for it—not just a restatement of the change. Cover new modules/helpers and structural refactors as well as behavior changes, so a reviewer can understand why each substantial part of the diff exists.
+
 The body of the pull request shouldn't just be a simulacrum of the task file. It should be more oriented to an *external user* and/or a *human reviewer*. So it should summarise what the net effect will be if/when the pull request is merged. If adding a new feature to a library, show some very abbreviated self-contained sample code showcasing how it would be used (use judgement here, you can hallucinate exeternal calls if they're obviously external and verbosely named like `const weather = await getWeatherDataFromSomeExternalAPI()`, since that makes clear which part *isn't* being showcased here).
 
 Similarly if there's a bug you could showcase some sample code with the before/after output. You can use comments and hand-waving in this sample code. It's just for communication.
