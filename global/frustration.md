@@ -936,3 +936,16 @@ Session: 01a0af72-1c49-71f1-bec8-12f918ada371
 User: “yeah. what the helly man. i think we need those interceptions back!”
 
 After rejecting an unrequested project AI policy, the user expected the test interceptions to remain. The agent removed most of the interception setup and scripted tests together with the policy, reducing the diff from 90 files to 7 and leaving the original spending problem unresolved. The user had to ask for the useful interceptions to be restored.
+
+---
+
+Agent: Codex
+Session: 01a0b054-bdd8-7d52-9c01-30d9b92576c8
+Timestamp: 2026-09-18T12:17:49.985039+00:00
+
+User: "let's just use evidence.ignoreme/ - don't copy generated crap into git"
+
+Committed generated Cloudflare experiment JSON under `evidence/` even though the
+test already wrote ignored local output under `evidence.ignoreme/`. This added
+thousands of noisy generated lines and duplicated artifacts. The user wants
+generated run output kept out of Git.
