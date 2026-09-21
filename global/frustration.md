@@ -949,3 +949,11 @@ Committed generated Cloudflare experiment JSON under `evidence/` even though the
 test already wrote ignored local output under `evidence.ignoreme/`. This added
 thousands of noisy generated lines and duplicated artifacts. The user wants
 generated run output kept out of Git.
+
+---
+Agent: Codex
+Session: 01a0b054-bdd8-7d52-9c01-30d9b92576c8
+Timestamp: 2026-09-21T14:35:38.844982+00:00
+User: “wait, what?? now it does *not* do the preview lease cycling?? I'm completely confused why you've done it this way. It's a change proposal, it's by its nature an experiment. We want to experiment with making CI *actually* work this way. You need to write the changes as though they're permanent changes.”
+
+The agent implemented an operator-driven research harness rather than the requested real CI lifecycle. When asked to ignore temporary experiment files, it also removed the lease-cycling CI behavior, leaving only an incidental Git checkout optimization. The user wanted a production-shaped implementation on an experimental PR, with the branch serving as the experiment boundary, not special experiment folders or opt-in branch-only code.
