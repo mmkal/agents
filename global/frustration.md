@@ -957,3 +957,13 @@ Timestamp: 2026-09-21T14:35:38.844982+00:00
 User: “wait, what?? now it does *not* do the preview lease cycling?? I'm completely confused why you've done it this way. It's a change proposal, it's by its nature an experiment. We want to experiment with making CI *actually* work this way. You need to write the changes as though they're permanent changes.”
 
 The agent implemented an operator-driven research harness rather than the requested real CI lifecycle. When asked to ignore temporary experiment files, it also removed the lease-cycling CI behavior, leaving only an incidental Git checkout optimization. The user wanted a production-shaped implementation on an experimental PR, with the branch serving as the experiment boundary, not special experiment folders or opt-in branch-only code.
+
+---
+
+**Agent:** Claude Code (Fable 5.1)
+**Session:** e665a73e-1c95-414a-9e6a-9a2cdc667650 (mishnusterate self-host setup)
+**Time:** 2026-09-23 16:35 BST
+
+**User message:** "how can i do it when you've put this stupid question in place of my prompt box"
+
+**Summary:** Agent asked the user to run `/mcp` in the current Claude Code session to authenticate a newly added MCP server, then immediately called AskUserQuestion. The blocking question replaced the prompt box, so the user could not type `/mcp` at all. Rule of thumb: when the next step requires the user to type something in the *same* session (a slash command, `! cmd`), end the turn with plain instructions instead of a blocking question.
