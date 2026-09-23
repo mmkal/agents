@@ -957,3 +957,18 @@ Timestamp: 2026-09-21T14:35:38.844982+00:00
 User: “wait, what?? now it does *not* do the preview lease cycling?? I'm completely confused why you've done it this way. It's a change proposal, it's by its nature an experiment. We want to experiment with making CI *actually* work this way. You need to write the changes as though they're permanent changes.”
 
 The agent implemented an operator-driven research harness rather than the requested real CI lifecycle. When asked to ignore temporary experiment files, it also removed the lease-cycling CI behavior, leaving only an incidental Git checkout optimization. The user wanted a production-shaped implementation on an experimental PR, with the branch serving as the experiment boundary, not special experiment folders or opt-in branch-only code.
+
+---
+
+Agent: Claude Code (Claude Desktop, Code tab)
+Session: c9ed241a-727f-415c-ad05-95563f9360ed
+Timestamp: 2026-09-23T14:47:00Z
+User: "alright fukin merge it"
+
+Probably impatience rather than a defect. A one-helper PR (iterate/iterate#2877: stop the dash
+blocking every issuer on iterate's workers.dev account subdomains) took many turns: the agent
+explained the blocklist several times, its wording ("nothing on workers.dev is userspace") was
+imprecise and set off a run of follow-up questions ("wouldn't it be under workers.dev?", "what about
+an evil app?", "what about evil.com?"), and then a merge conflict had to be fixed. Tighter wording at
+the start ("nobody outside iterate can create a hostname under iterate's workers.dev subdomains")
+would likely have saved most of those turns.
