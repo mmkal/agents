@@ -984,3 +984,9 @@ Summary: Same incident as the Codex entry above (session 01a0d2b9-…), reported
 was this session's `misherate/instructions.md`: step 8 said to register the MCP server "in each
 client the user uses (e.g. Claude Code: …)". Codex, running the instructions, read that as an order
 to also set up the user's Claude Code, and started a second OAuth flow the user never asked for.
+---
+Agent: GPT-6 Sol Fast (OpenCode)
+Session: ses_f2ce7e51fffe2pTmOb037TemDB
+Timestamp: 2026-09-24
+User: "for next time - what would you suggest i add to instructions.md to prevent fuckups like the one you did with the mcp server?"
+Summary: During self-hosted iterate setup, I ran `opencode mcp add ... --global` and told the user to find the server in `/mcps` without verifying it appeared in `opencode mcp list`. The running OpenCode service had not reloaded its configuration, so `/mcps` did not show it. After the user reported the problem, `opencode reload` made it appear. The failure was declaring configuration success before checking the live client-visible state.
