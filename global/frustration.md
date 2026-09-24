@@ -967,3 +967,20 @@ The agent implemented an operator-driven research harness rather than the reques
 **User message:** "how can i do it when you've put this stupid question in place of my prompt box"
 
 **Summary:** Agent asked the user to run `/mcp` in the current Claude Code session to authenticate a newly added MCP server, then immediately called AskUserQuestion. The blocking question replaced the prompt box, so the user could not type `/mcp` at all. Rule of thumb: when the next step requires the user to type something in the *same* session (a slash command, `! cmd`), end the turn with plain instructions instead of a blocking question.
+---
+Agent: Codex (GPT-6)
+Session: 01a0d2b9-8a94-7790-963a-061984732ab3
+Timestamp: 2026-09-24 10:30:52 BST
+User message: "why are you doing claude code mcp signin moron"
+Summary: While setting up self-hosted iterate, the agent inferred from Claude Code being installed and having an existing iterate MCP server that the user wanted the new deployment connected there too. It initiated an unrequested Claude Code OAuth flow. The user objected. The agent signed out of and removed the Claude Code MCP entry it had added.
+
+---
+
+Agent: Claude Code (Opus 5.5, Claude Desktop)
+Session: c9ed241a-727f-415c-ad05-95563f9360ed
+Timestamp: 2026-09-24 BST
+User message: "Why is codex doing claude code mcp signin wtf?"
+Summary: Same incident as the Codex entry above (session 01a0d2b9-…), reported here. The root cause
+was this session's `misherate/instructions.md`: step 8 said to register the MCP server "in each
+client the user uses (e.g. Claude Code: …)". Codex, running the instructions, read that as an order
+to also set up the user's Claude Code, and started a second OAuth flow the user never asked for.
