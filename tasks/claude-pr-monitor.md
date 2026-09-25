@@ -7,7 +7,8 @@ size: medium
 
 ## Status
 
-Spec written from research; implementation not started.
+Mostly done. The watcher script, tests, and skill/AGENTS.md changes are in. It has been checked read-only against real PRs.
+Missing: a real end-to-end delivery (a monitor session relaying one of your comments to an owner session). That needs a monitor session, which is your call (see PR).
 
 ## Goal
 
@@ -47,11 +48,18 @@ Auto-fix (read from the desktop app bundle, `AutoFixEngine`):
 
 ## Checklist
 
-- [ ] `claude-monitor.ts` with `register`, `watch`, `ack`, `status`
-- [ ] Integration tests against a local fake GitHub (no mocks)
-- [ ] SKILL.md: split into shared rules + Codex section + Claude section; keep the Codex protocol intact
-- [ ] global/AGENTS.md: point Claude at Auto-fix + registration
-- [ ] Live check against a real PR (read-only)
+- [x] `claude-monitor.ts` with `register`, `watch`, `ack`, `status` _`global/skills/pr-monitor/scripts/claude-monitor.ts`. `ack` became `delivered`/`undeliverable`, plus `check` for a single foreground poll._
+- [x] Integration tests against a local fake GitHub (no mocks) _`tests/claude-pr-monitor.test.ts`, 11 tests, fake GraphQL server at the bottom. Mutation-checked: breaking the 🤖/pending filters fails the right tests._
+- [x] SKILL.md: split into shared rules + Codex section + Claude section; keep the Codex protocol intact _Codex text unchanged, headings demoted one level under `## Codex`._
+- [x] global/AGENTS.md: point Claude at Auto-fix + registration
+- [x] Live check against a real PR (read-only) _iterate/middlewright#42, mmkal/artifact.ci#24, mmkal/trpc-cli#222 in a scratch state dir: 🤖 replies skipped, pre-registration comments baselined, backdated registration relays the real comments correctly._
 - [ ] Arm the monitor session and confirm a real delivery
 
 ## Implementation notes
+
+- The Codex heartbeat is a persisted app automation. Claude has no equivalent that targets an existing session. `CronCreate`/`Monitor` are in-memory, and desktop scheduled tasks run in fresh unattended sessions that can't `SendMessage`. So the watcher runs as a background Bash command in the monitor session. A background command outlived the 10-minute Bash timeout (verified with `sleep 700`), and it exempts the session from the app's idle eviction (`CliGovernor.getLruIdleCandidate` skips sessions with active background tasks or cron jobs).
+- The watcher exits only when it has a batch or notice, so the monitor session takes no turns while quiet. `Monitor` would have needed a re-arm turn every 30 minutes.
+- Unacked batches are re-printed at most 3 times, then dropped with a notice. That stops a restart-without-ack loop from waking the monitor forever.
+- Registration timestamps baseline only top-level comments and review summaries. Inline threads use resolution as the "handled" signal, and resolving a thread clears its seen state so reopening re-relays it.
+- Timings during the live check were slow (4–12s per command) because the machine's load average was ~170 at the time; a bare `node -e 0` took 0.5s.
+- Local `main` had 20 unpushed auto-commits (including `global/frustration.md`). This branch is based on `origin/main` and only carries over the pr-monitor skill files from local main, to avoid publishing the rest.
