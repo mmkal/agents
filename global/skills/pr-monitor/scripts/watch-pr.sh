@@ -71,7 +71,7 @@ while true; do
                 id isResolved isOutdated path line originalLine
                 comments(first:100) {
                   nodes {
-                    databaseId url body createdAt
+                    databaseId url body createdAt state
                     author { login }
                   }
                 }
@@ -82,6 +82,8 @@ while true; do
       }' |
       jq -r '.data.repository.pullRequest.reviewThreads.nodes[]
         | select(.isResolved == false)
+        | .comments.nodes |= map(select(.state == "SUBMITTED"))
+        | select(.comments.nodes | length > 0)
         | [
             .id,
             .path,
@@ -100,7 +102,8 @@ while true; do
 
   reviews="$(
     gh api "repos/$OWNER/$REPO/pulls/$PR/reviews" --paginate |
-      jq -r '.[] | [.node_id, .user.login, .state, .submitted_at, .html_url, ((.body // "") | gsub("\n"; " "))] | @tsv'
+      jq -r '.[] | select(.state != null and .state != "PENDING" and .submitted_at != null)
+        | [.node_id, .user.login, .state, .submitted_at, .html_url, ((.body // "") | gsub("\n"; " "))] | @tsv'
   )"
 
   checks="$(gh pr checks "$PR" --repo "$OWNER/$REPO" 2>&1 || true)"
