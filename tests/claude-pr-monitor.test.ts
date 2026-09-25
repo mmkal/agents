@@ -131,6 +131,8 @@ test('watch waits for feedback, then exits with delivery and restart instruction
     /Watcher: running in monitor session local_monitor \(pid \d+, last poll \d+s ago\)\. Nothing else to do\./,
   )
 
+  expect(await check({stateDir: state.dir, githubApi: github.url})).toContain('not polling alongside it')
+
   pr.comment({author: 'mmkal', body: 'can you also update the README?'})
   const output = await watching
 

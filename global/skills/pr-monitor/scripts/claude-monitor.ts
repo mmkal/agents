@@ -83,9 +83,9 @@ export async function watch(params: {
 }) {
   const stateDir = params.stateDir || DEFAULT_STATE_DIR
   const interval = params.interval || 60
-  const existing = await readWatcher(stateDir)
-  if (existing && existing.pid !== process.pid && isAlive(existing.pid) && !existing.exitedAt) {
-    return `Another watcher (pid ${existing.pid}, monitor ${existing.monitorSession}) is already running. Not starting a second one.`
+  const running = await runningWatcher(stateDir)
+  if (running) {
+    return `Another watcher (pid ${running.pid}, monitor ${running.monitorSession}) is already running. Not starting a second one.`
   }
   const watcher: Watcher = {
     pid: process.pid,
@@ -111,7 +111,7 @@ export async function watch(params: {
   }
 }
 
-/** Run a single poll now. Same output as `watch`, but returns "Nothing new." instead of waiting. */
+/** Run a single poll now, when no watcher is running. Same output as `watch`, but returns "Nothing new." instead of waiting. */
 export async function check(params: {
   /** default ../state.ignoreme/claude next to this script */
   stateDir?: string
@@ -119,6 +119,10 @@ export async function check(params: {
   githubApi?: string
 }) {
   const stateDir = params.stateDir || DEFAULT_STATE_DIR
+  const running = await runningWatcher(stateDir)
+  if (running) {
+    return `A watcher (pid ${running.pid}) is running in monitor session ${running.monitorSession}; not polling alongside it, which could deliver the same comment twice. Use status instead.`
+  }
   const result = await poll({stateDir, githubApi: params.githubApi || DEFAULT_GITHUB_API})
   if (result.batches.length === 0 && result.notices.length === 0) return 'Nothing new.'
   return formatPollResult(result, {stateDir, restart: null})
@@ -252,7 +256,7 @@ async function poll(params: {stateDir: string; githubApi: string}): Promise<Poll
   if (result.batches.length > 0 || result.notices.length > 0) return result
 
   const now = new Date()
-  const token = process.env.GH_TOKEN || execFileSync('gh', ['auth', 'token'], {encoding: 'utf8'}).trim()
+  let token: string | undefined
   for (const registration of await readRegistrations(stateDir)) {
     const ref = parsePrUrl(registration.prUrl)
     const deliveryPath = join(stateDir, 'deliveries', `${ref.key}.json`)
@@ -269,6 +273,7 @@ async function poll(params: {stateDir: string; githubApi: string}): Promise<Poll
     }
     let activity: PrActivity
     try {
+      token ||= process.env.GH_TOKEN || execFileSync('gh', ['auth', 'token'], {encoding: 'utf8'}).trim()
       activity = await fetchPrActivity({api: params.githubApi, token, ref})
     } catch (error) {
       delivery.consecutiveFailures += 1
@@ -534,6 +539,13 @@ function describeWatcher(watcher: Watcher | null, now: Date) {
   }
   const since = watcher.exitedAt || watcher.lastPollAt || watcher.startedAt
   return `Watcher: not running since ${since}. SendMessage to the monitor session ${watcher.monitorSession}: "Restart the PR monitor watcher."`
+}
+
+/** The watcher recorded in watcher.json, if it's still polling. */
+async function runningWatcher(stateDir: string) {
+  const watcher = await readWatcher(stateDir)
+  if (!watcher || watcher.exitedAt || !isAlive(watcher.pid)) return null
+  return watcher
 }
 
 function isAlive(pid: number) {
