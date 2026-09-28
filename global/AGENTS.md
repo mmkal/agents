@@ -250,3 +250,7 @@ Use the "bro" guidance on *yourself* for any section that's more than a couple o
 Big objects are easy to look at if you use yaml + codemirror, as in the example. That also allows you to put inline comments for extra explanation.
 
 When you create the explainer, use `open` to open it for me.
+
+## Tuple
+
+I sometimes ask you to review Tuple calls. When I do: if you are asked to set the title of the chat session, use the format `Tuple 9/28: <very-brief-summary>`. That way I can see the Tuple call review sessions quickly on my sidebar and distinguish between them.
