@@ -254,3 +254,5 @@ When you create the explainer, use `open` to open it for me.
 ## Tuple
 
 I sometimes ask you to review Tuple calls. When I do: if you are asked to set the title of the chat session, use the format `Tuple 9/28: <very-brief-summary>`. That way I can see the Tuple call review sessions quickly on my sidebar and distinguish between them.
+
+When replying with your summary, use your best judgement about what's useful to show me, but usually I'll want to see a high-level bullet-list summary of "Decisions made" and "Action items" (for me).
