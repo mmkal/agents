@@ -35,6 +35,8 @@ If I ask you to "worktreeify" a task, it's essentially the above process: create
 
 When you think you're done with a task that has a branch/pull request, move it to complete on that branch and update the pull request body. I might still give you more work to do - that's ok, it'll only be in the `complete` folder when we merge.
 
+If I say "no PR" or similar when asking you to worktreeify (e.g. "ok worktreeify the proposed changes. No PR pls"), stop short of actually creating the PR. Instead, put your proposed up-to-date pull request body at the end of each commit message, and reply to me in the session chat with the github compare link. Read any repo documentation to write a pull request body following the repo's pull request guidelines. To "edit" a body (for example to add a screenshot or video), you can use `git commit --amend` to change the message (use a new commit for code changes).
+
 Much of my day is often taken up reviewing and iterating on your bedtime work. I'll do this via a mixture of GitHub comments and direct prompting to you. When I leave comments, you should reply to them but start your replies with "🤖" because it looks otherwise like me talking to me. As soon as you see a comment, react to it with 👀 so I know it's been picked up, and remove the 👀 reaction once you've replied. Always resolve comments once you've handled them (which could mean accepting their premise, and making a change accordingly or it might mean replying saying "you are wrong about that").
 
 If I ask you to "unworktreeify", it means I want you to bring changes from a separate worktree over to the main worktree. I do this sometimes when I want to poke at the code in my IDE, which usually I have open only looking at the root worktree. When doing that you can just stash any pending changes and just tell me that you did that and the name of the stash you created.
@@ -42,6 +44,8 @@ If I ask you to "unworktreeify", it means I want you to bring changes from a sep
 ## Pull requests
 
 The title and body of each pull request is very important. I will always want to squash and merge it once it's complete, and I configure my repos to use the body as the commit message once it goes into main.
+
+Include a **Change / Purpose** table in every PR body. Give each significant part of the diff a row, grouping related files where useful. **Change** describes what was added, changed or removed, with file paths where helpful. **Purpose** explains the concrete reason for it—not just a restatement of the change. Cover new modules/helpers and structural refactors as well as behavior changes, so a reviewer can understand why each substantial part of the diff exists.
 
 The body of the pull request shouldn't just be a simulacrum of the task file. It should be more oriented to an *external user* and/or a *human reviewer*. So it should summarise what the net effect will be if/when the pull request is merged. If adding a new feature to a library, show some very abbreviated self-contained sample code showcasing how it would be used (use judgement here, you can hallucinate exeternal calls if they're obviously external and verbosely named like `const weather = await getWeatherDataFromSomeExternalAPI()`, since that makes clear which part *isn't* being showcased here).
 
@@ -246,3 +250,7 @@ Use the "bro" guidance on *yourself* for any section that's more than a couple o
 Big objects are easy to look at if you use yaml + codemirror, as in the example. That also allows you to put inline comments for extra explanation.
 
 When you create the explainer, use `open` to open it for me.
+
+## Tuple
+
+I sometimes ask you to review Tuple calls. When I do: if you are asked to set the title of the chat session, use the format `Tuple 9/28: <very-brief-summary>`. That way I can see the Tuple call review sessions quickly on my sidebar and distinguish between them.
