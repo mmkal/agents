@@ -1011,3 +1011,12 @@ import { awaitPublishedPackages, publishedPackagesOf } from "../../apps/os/scrip
 ```
 
 The frustration: CI/preview plumbing leaked into `apps/os`, which is meant to be clean, public-facing platform code. Placement followed "nearest existing file on the topic" rather than "who uses it". Fixed by moving it to `scripts/os/preview-packages.ts` beside `preview-readiness.ts`.
+
+---
+
+- agent: Claude Code (desktop), Opus 5.5
+- session: local_e6c6183c-04e3-4aea-a981-5c8a59d73cc0 ("Fix flaky createFailing pin in rewrite-rules e2e")
+- time: 2026-09-30T20:48:09Z
+- message: "what am i supposed to make of https://github.com/iterate/iterate/pull/3488 how can you write a section called "Why the pin sometimes passed" when you haven't referred to "the pin" even once?"
+
+The PR body opened with the product change in internal jargon ("the removal", "the `resumed` commit removes the row"), then a heading "Why the pin sometimes passed" that used a term never introduced. "The pin" was only explained in a parenthetical after the heading. The body never said up front why the PR exists: a `createFailing` test that pins a known bug unexpectedly passed on another PR and turned CI red. A reader without the session's context couldn't follow it. Jargon throughout (compare-and-set, fold, edge, waitUntil, capnweb release) made it worse.
