@@ -990,3 +990,9 @@ Session: ses_f2ce7e51fffe2pTmOb037TemDB
 Timestamp: 2026-09-24
 User: "for next time - what would you suggest i add to instructions.md to prevent fuckups like the one you did with the mcp server?"
 Summary: During self-hosted iterate setup, I ran `opencode mcp add ... --global` and told the user to find the server in `/mcps` without verifying it appeared in `opencode mcp list`. The running OpenCode service had not reloaded its configuration, so `/mcps` did not show it. After the user reported the problem, `opencode reload` made it appear. The failure was declaring configuration success before checking the live client-visible state.
+---
+Agent: Claude Code (Opus 5.5, Claude Desktop)
+Session: local_56bfaaef-27b6-4bb6-bbb6-719aa1d44df5 (Bring back the mobile app (iterate/mobile))
+Timestamp: 2026-09-30 BST
+User message: "it doesn't look right. When I said "bring back the app" I meant I wanted all the UI to be exactly how it was. Basically I was expecting byte identical react, with surgical changes... As it is everything looks slightly different, slightly worse. And there are loads of pieces just missing"
+Summary: Asked to "bring back" a deleted Expo app (iterate/iterate apps/mobile) in a new repo against a changed backend, the agent rewrote every screen from scratch in a smaller shape instead of copying the old source and patching the API seams. The chat lost its attachment "+" sheet, the working pill, the three-dots menu and the drawer layout; the repo viewer shrank to a text box; missing platform features were apologised for in the menu. "Bring back X" means restore X's code verbatim and change only what the new environment forces.
