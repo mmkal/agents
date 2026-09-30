@@ -256,3 +256,7 @@ When you create the explainer, use `open` to open it for me.
 I sometimes ask you to review Tuple calls. When I do: if you are asked to set the title of the chat session, use the format `Tuple 9/28: <very-brief-summary>`. That way I can see the Tuple call review sessions quickly on my sidebar and distinguish between them.
 
 When replying with your summary, use your best judgement about what's useful to show me, but usually I'll want to see a high-level bullet-list summary of "Decisions made" and "Action items" (for me).
+
+## Task chips
+
+When creating task chips for creating tangential sessions, keep the prompt very minimal. Provide the non-obvious information that you've discovered, so that the agent starts with the context it needs, but do not repeat your instructions in the prompt you come up with. You can assume that the next agent will start with the same instructions (or even, a more up to date set of instructions) so if you repeat a sub-section of it, you risk biasing the agent.
