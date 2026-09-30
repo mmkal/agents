@@ -996,3 +996,18 @@ Session: local_56bfaaef-27b6-4bb6-bbb6-719aa1d44df5 (Bring back the mobile app (
 Timestamp: 2026-09-30 BST
 User message: "it doesn't look right. When I said "bring back the app" I meant I wanted all the UI to be exactly how it was. Basically I was expecting byte identical react, with surgical changes... As it is everything looks slightly different, slightly worse. And there are loads of pieces just missing"
 Summary: Asked to "bring back" a deleted Expo app (iterate/iterate apps/mobile) in a new repo against a changed backend, the agent rewrote every screen from scratch in a smaller shape instead of copying the old source and patching the API seams. The chat lost its attachment "+" sheet, the working pill, the three-dots menu and the drawer layout; the repo viewer shrank to a text box; missing platform features were apologised for in the menu. "Bring back X" means restore X's code verbatim and change only what the new environment forces.
+
+---
+
+**Agent:** Claude Code (Opus 5.5), session `local_74e7f4f1-3a46-40df-929a-ede93409309a` (CLI `d3240b35-546f-4ae4-8655-4af6176edb35`), "Make previews wait for their pkg.pr.new builds"
+**When:** 2026-09-30T15:05Z (approx)
+**User said:** "this feels wrong. we're supposed to be making apps/os sacred, this will be our public-facing platform code. and now it's got some pkg.pr.new horseshit in there. without having checked or even thought it through i expected it to be in `scripts/*` rather than `apps/os/scripts/*`"
+
+**What happened:** iterate/iterate#3477 added a CI-only wait (poll pkg.pr.new until a preview's packages are published) used only by `scripts/os/preview.ts`. The agent put it in `apps/os/scripts/published-package-commit.ts` because a related helper (`checkoutPublishedPackageCommit`) already lived there, instead of asking where the only caller lives:
+
+```ts
+// scripts/os/preview.ts — the only caller
+import { awaitPublishedPackages, publishedPackagesOf } from "../../apps/os/scripts/published-package-commit.ts";
+```
+
+The frustration: CI/preview plumbing leaked into `apps/os`, which is meant to be clean, public-facing platform code. Placement followed "nearest existing file on the topic" rather than "who uses it". Fixed by moving it to `scripts/os/preview-packages.ts` beside `preview-readiness.ts`.
