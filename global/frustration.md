@@ -1020,3 +1020,21 @@ The frustration: CI/preview plumbing leaked into `apps/os`, which is meant to be
 - message: "what am i supposed to make of https://github.com/iterate/iterate/pull/3488 how can you write a section called "Why the pin sometimes passed" when you haven't referred to "the pin" even once?"
 
 The PR body opened with the product change in internal jargon ("the removal", "the `resumed` commit removes the row"), then a heading "Why the pin sometimes passed" that used a term never introduced. "The pin" was only explained in a parenthetical after the heading. The body never said up front why the PR exists: a `createFailing` test that pins a known bug unexpectedly passed on another PR and turned CI red. A reader without the session's context couldn't follow it. Jargon throughout (compare-and-set, fold, edge, waitUntil, capnweb release) made it worse.
+
+---
+
+**Agent:** Claude Code (Opus 5.5) · **Session:** local_e50f5043-90fe-4a98-aa44-155f84559c5a · **When:** 2026-10-01
+
+**Misha (review of iterate/iterate#3493):** "can we not repeat these banal comments everywhere please" · "I'd prefer using async subprocess-invoking commands. I use async-ness as a rough proxy for 'potentially expensive' and execSync/execFileSync make that wrong … maybe just this file + frustration log" · "not really clear from the jsdoc/naming what this function *does*. i can kind of get it by reading your long-ass paragraph but why make people do that bro"
+
+**Summary:** three habits in one CI script and its workflows.
+
+1. **Sync subprocesses for expensive work.** `execFileSync`/`spawnSync` for `pnpm install`, builds, a Java tool and git network calls. Async is the signal that a call is costly; sync hides it.
+
+   ```ts
+   execFileSync("pnpm", ["install", "--frozen-lockfile"], { cwd, stdio: "inherit" }); // looks cheap
+   await run("pnpm", ["install", "--frozen-lockfile"], { cwd }); // wanted
+   ```
+
+2. **Restating comments and defaults in workflows.** A comment explaining Java 25 copied above each `setup-java`, `name:` on steps whose `uses:` already says it all, and `with: ref: ${{ github.sha }}` on `actions/checkout`, which is its default.
+3. **A name and doc that don't say what the function does.** `root()` with a long paragraph of mechanism. The first sentence should say what it produces ("generates the copy's pnpm-workspace.yaml and pnpm-lock.yaml"), and the name should too (`workspaceFiles`).
