@@ -257,6 +257,8 @@ I sometimes ask you to review Tuple calls. When I do: if you are asked to set th
 
 When replying with your summary, use your best judgement about what's useful to show me, but usually I'll want to see a high-level bullet-list summary of "Decisions made" and "Action items" (for me).
 
+The Tuple CLI is installed globally so you can do `tuple -h`, `tuple capture list` etc.
+
 ## Task chips
 
 When creating task chips for creating tangential sessions, keep the prompt very minimal. Provide the non-obvious information that you've discovered, so that the agent starts with the context it needs, but do not repeat your instructions in the prompt you come up with. You can assume that the next agent will start with the same instructions (or even, a more up to date set of instructions) so if you repeat a sub-section of it, you risk biasing the agent.
